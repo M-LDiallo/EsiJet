@@ -129,3 +129,21 @@
     @apply font-sans;
   }
 }
+
+.phone-input-esijet .PhoneInputInput {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: rgba(255,255,255,0.9);
+  font-size: 0.875rem;
+}
+
+.phone-input-esijet .PhoneInputCountry {
+  margin-right: 0.75rem;
+  color: rgba(217,184,79,0.9);
+}
+
+.phone-input-esijet .PhoneInputCountrySelectArrow {
+  color: rgba(217,184,79,0.8);
+}
