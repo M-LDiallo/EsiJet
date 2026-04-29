@@ -33,10 +33,12 @@ import {
   Wind,
   CheckCircle2,
   Crown,
-  Leaf,
   CreditCard,
   Timer,
+  Globe,
   Star,
+  Utensils,
+  LogOut
 } from "lucide-react";
 import {
   Drawer,
@@ -48,6 +50,8 @@ import {
 
 import PhoneInput, { isValidPhoneNumber } from "react-phone-number-input";
 import "react-phone-number-input/style.css";
+
+import { allAirports, searchAirports, type Airport } from "@/lib/airports";
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 const isValidEmail = (email?: string) => {
@@ -64,15 +68,6 @@ const isValidInternationalPhone = (phone?: string) => {
 };
 
 const MapBox = dynamic(() => import("@/components/MapBox"), { ssr: false });
-
-type Airport = {
-  code: string;
-  name: string;
-  city: string;
-  country: string;
-  vip?: boolean;
-  coords: [number, number];
-};
 
 type Vehicle = {
   id: string;
@@ -118,11 +113,17 @@ type BookingPayload = {
   note?: string;
   jet?: Vehicle | null;
   contact?: {
-    name: string;
+    firstName: string;
+    lastName: string;
     phone: string;
     email: string;
+    nationality: string;
+    dob: string;
   };
   services?: Record<string, boolean>;
+  catering?: string[];
+  isLocked?: boolean;
+  isCustomRoute?: boolean;
 };
 
 type EmptyLeg = {
@@ -148,6 +149,7 @@ type CustomSelectAirportProps = {
   pax?: never;
   setPax?: never;
   maxPax?: never;
+  disabled?: boolean;
 };
 
 type CustomSelectPaxProps = {
@@ -159,6 +161,7 @@ type CustomSelectPaxProps = {
   pax: number;
   setPax: (pax: number) => void;
   maxPax?: number;
+  disabled?: boolean;
 };
 
 type CustomSelectProps = CustomSelectAirportProps | CustomSelectPaxProps;
@@ -195,54 +198,23 @@ const styles = {
     "w-full bg-transparent text-sm text-white/90 outline-none placeholder:text-white/30 [color-scheme:dark]",
 };
 
-const airports: Airport[] = [
-  {
-    code: "LFMN",
-    name: "Nice Côte d’Azur",
-    city: "Nice",
-    country: "France",
-    vip: true,
-    coords: [43.658, 7.215],
-  },
-  {
-    code: "LFPB",
-    name: "Paris Le Bourget",
-    city: "Paris",
-    country: "France",
-    vip: true,
-    coords: [48.969, 2.441],
-  },
-  {
-    code: "LSGG",
-    name: "Genève Cointrin",
-    city: "Genève",
-    country: "Suisse",
-    coords: [46.238, 6.108],
-  },
-  {
-    code: "OMDW",
-    name: "Dubaï Al Maktoum",
-    city: "Dubaï",
-    country: "E.A.U.",
-    vip: true,
-    coords: [25.204, 55.27],
-  },
-  {
-    code: "MRS",
-    name: "Marseille Provence",
-    city: "Marseille",
-    country: "France",
-    coords: [43.436, 5.215],
-  },
-  {
-    code: "FAB",
-    name: "Farnborough",
-    city: "Londres",
-    country: "Royaume-Uni",
-    vip: true,
-    coords: [51.47, -0.454],
-  },
-];
+// Fonction helper pour forcer le bon aéroport des vols prédéfinis
+const getPredefinedAirport = (city: string): Airport | null => {
+  const codes: Record<string, string> = {
+    "Nice": "NCE",
+    "Marseille": "MRS",
+    "Genève": "GVA",
+    "Londres": "LHR",
+    "Paris": "LBG",
+    "Dubaï": "DWC",
+  };
+  
+  if (codes[city]) {
+    const found = allAirports.find((a) => a.code === codes[city]);
+    if (found) return found;
+  }
+  return searchAirports(city)[0] ?? null;
+};
 
 const flights: Flight[] = [
   {
@@ -403,7 +375,7 @@ const flights: Flight[] = [
 const emptyLegs: EmptyLeg[] = [
   {
     id: "el1",
-    from: "Paris (LFPB)",
+    from: "Paris (LBG)",
     to: "Ibiza (IBZ)",
     cityFrom: "Paris",
     cityTo: "Ibiza",
@@ -416,8 +388,8 @@ const emptyLegs: EmptyLeg[] = [
   },
   {
     id: "el2",
-    from: "Nice (LFMN)",
-    to: "Genève (LSGG)",
+    from: "Nice (NCE)",
+    to: "Genève (GVA)",
     cityFrom: "Nice",
     cityTo: "Genève",
     date: "Jeu. 28 Mai",
@@ -429,8 +401,8 @@ const emptyLegs: EmptyLeg[] = [
   },
   {
     id: "el3",
-    from: "Dubaï (OMDW)",
-    to: "Londres (FAB)",
+    from: "Dubaï (DWC)",
+    to: "Londres (LHR)",
     cityFrom: "Dubaï",
     cityTo: "Londres",
     date: "Sam. 30 Mai",
@@ -463,6 +435,14 @@ const flightOptions = [
   },
 ];
 
+const cateringOptions = [
+  { id: "veg", label: "Végétarien" },
+  { id: "gluten", label: "Sans Gluten" },
+  { id: "halal", label: "Halal" },
+  { id: "casher", label: "Casher" },
+  { id: "premium", label: "Traiteur Sur-Mesure" },
+];
+
 const bottomNav = [
   { id: "explorer", icon: Search, label: "Explorer" },
   { id: "voyages", icon: Plane, label: "Vols" },
@@ -470,7 +450,7 @@ const bottomNav = [
   { id: "menu", icon: Menu, label: "Menu" },
 ] as const;
 
-const M_TABS = ["Menu", "Recherche", "Vols à vide", "Flotte", "Privilège"] as const;
+const M_TABS = ["Menu", "Recherche", "Vols à vide", "Transferts", "Privilège"] as const;
 
 const fadeUp = {
   initial: { opacity: 0, y: 24 },
@@ -490,22 +470,23 @@ function CustomSelect(props: CustomSelectProps) {
         ? `${props.val.city} (${props.val.code})`
         : props.ph;
 
-  const filtered = airports.filter(
-    (a) =>
-      a.city.toLowerCase().includes(search.toLowerCase()) ||
-      a.code.toLowerCase().includes(search.toLowerCase()) ||
-      a.name.toLowerCase().includes(search.toLowerCase()),
-  );
+  const filtered = props.type === "airport" ? searchAirports(search).slice(0, 50) : [];
 
   return (
     <div className="relative w-full min-w-0">
       <button
         type="button"
+        disabled={props.disabled}
         onClick={() => {
+          if (props.disabled) return;
           vibrate(8);
           setOpen(!open);
         }}
-        className={cx(styles.inputDark, "relative text-left truncate")}
+        className={cx(
+          styles.inputDark, 
+          "relative text-left truncate", 
+          props.disabled ? "opacity-60 cursor-not-allowed bg-white/[0.02]" : "cursor-pointer"
+        )}
       >
         <props.Icon
           className="absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/60"
@@ -515,7 +496,7 @@ function CustomSelect(props: CustomSelectProps) {
       </button>
 
       <AnimatePresence mode="wait">
-        {open && (
+        {open && !props.disabled && (
           <>
             <div className="fixed inset-0 z-[90]" onClick={() => setOpen(false)} />
             <motion.div
@@ -531,7 +512,7 @@ function CustomSelect(props: CustomSelectProps) {
                     <input
                       autoFocus
                       type="text"
-                      placeholder="Rechercher..."
+                      placeholder="Rechercher une ville, un aéroport..."
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                       className="w-full bg-transparent text-sm text-white outline-none"
@@ -549,10 +530,10 @@ function CustomSelect(props: CustomSelectProps) {
                             setOpen(false);
                             setSearch("");
                           }}
-                          className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition hover:bg-[#d9b84f]/10"
+                          className="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition hover:bg-[#d9b84f]/10 cursor-pointer"
                         >
                           <span className="min-w-0 truncate text-sm text-white">
-                            {a.city} <span className="text-xs text-white/40">- {a.name}</span>
+                            {a.city} <span className="text-xs text-white/40">- {a.name} ({a.country})</span>
                           </span>
                           {a.vip && (
                             <span className="rounded-full bg-[#d9b84f]/20 px-2 py-0.5 text-[8px] font-bold text-[#d9b84f]">
@@ -562,7 +543,7 @@ function CustomSelect(props: CustomSelectProps) {
                         </button>
                       ))
                     ) : (
-                      <div className="px-4 py-4 text-sm text-white/40">Aucun aéroport trouvé</div>
+                      <div className="px-4 py-4 text-center text-sm text-white/40">Aucun aéroport trouvé</div>
                     )}
                   </div>
                 </>
@@ -579,7 +560,7 @@ function CustomSelect(props: CustomSelectProps) {
                           vibrate(8);
                           props.setPax(Math.max(1, props.pax - 1));
                         }}
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-[#d9b84f]/20"
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-[#d9b84f]/20 cursor-pointer"
                       >
                         -
                       </button>
@@ -590,16 +571,16 @@ function CustomSelect(props: CustomSelectProps) {
                         type="button"
                         onClick={() => {
                           vibrate(8);
-                          props.setPax(Math.min(props.maxPax ?? 8, props.pax + 1));
+                          props.setPax(Math.min(props.maxPax ?? 30, props.pax + 1));
                         }}
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-[#d9b84f] text-black transition hover:bg-[#ebd57e]"
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-[#d9b84f] text-black transition hover:bg-[#ebd57e] cursor-pointer"
                       >
                         +
                       </button>
                     </div>
                   </div>
                   <p className="mt-3 text-[11px] text-[#d9b84f]/60">
-                    Capacité maximale : {props.maxPax ?? 8} passagers
+                    Capacité maximale : {props.maxPax ?? 30} passagers
                   </p>
                 </div>
               )}
@@ -614,12 +595,12 @@ function CustomSelect(props: CustomSelectProps) {
 function FlightSearchForm({
   withTextarea,
   onValider,
-  maxPax,
+  maxPax = 30,
   mobileStepMode = false,
 }: {
   withTextarea?: boolean;
   onValider: (payload: BookingPayload) => void;
-  maxPax: number;
+  maxPax?: number;
   mobileStepMode?: boolean;
 }) {
   const [step, setStep] = useState(1);
@@ -643,8 +624,11 @@ function FlightSearchForm({
       returnDate,
       tripType,
       note,
-      contact: { name: "", phone: "", email: "" },
+      contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
       services: {},
+      catering: [],
+      isLocked: true,
+      isCustomRoute: true,
     });
 
   if (!mobileStepMode) {
@@ -660,7 +644,7 @@ function FlightSearchForm({
                 setTripType(t);
               }}
               className={cx(
-                "rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all",
+                "rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all cursor-pointer",
                 tripType === t
                   ? "bg-[#d9b84f] text-black shadow-md"
                   : "border border-[#d9b84f]/30 bg-transparent text-[#d9b84f]/60 hover:bg-[#d9b84f]/10",
@@ -690,32 +674,34 @@ function FlightSearchForm({
           <p className="text-xs text-[#d9b84f]">Le départ et l’arrivée doivent être différents.</p>
         )}
 
-        <div className={cx("grid gap-4", tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
-          <div className="relative">
-            <CalendarDays
-              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50"
-              size={18}
-            />
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className={cx(styles.inputDark, "h-[48px] pl-12 [color-scheme:dark]")}
-            />
+        <div className={cx("grid gap-4 mt-2", tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
+          <div className="flex flex-col gap-1.5 w-full">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de départ</label>
+            <div className="relative">
+              <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
+              <input
+                type="date"
+                value={date}
+                onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                onChange={(e) => setDate(e.target.value)}
+                className={cx(styles.inputDark, "h-[48px] pl-12 w-full [color-scheme:dark] cursor-pointer")}
+              />
+            </div>
           </div>
 
           {tripType === "retour" && (
-            <div className="relative">
-              <CalendarDays
-                className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50"
-                size={18}
-              />
-              <input
-                type="date"
-                value={returnDate}
-                onChange={(e) => setReturnDate(e.target.value)}
-                className={cx(styles.inputDark, "h-[48px] pl-12 [color-scheme:dark]")}
-              />
+            <div className="flex flex-col gap-1.5 w-full">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de retour</label>
+              <div className="relative">
+                <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
+                <input
+                  type="date"
+                  value={returnDate}
+                  onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                  onChange={(e) => setReturnDate(e.target.value)}
+                  className={cx(styles.inputDark, "h-[48px] pl-12 w-full [color-scheme:dark] cursor-pointer")}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -730,7 +716,7 @@ function FlightSearchForm({
         />
 
         {withTextarea && (
-          <div className="relative w-full">
+          <div className="relative w-full mt-2">
             <MessageSquare className="absolute left-4 top-4 text-[#d9b84f]/50" size={18} />
             <textarea
               value={note}
@@ -750,13 +736,13 @@ function FlightSearchForm({
           }}
           whileTap={{ scale: !isStep1Valid || !isStep2Valid ? 1 : 0.98 }}
           className={cx(
-            "mt-4 w-full rounded-2xl py-4.5 text-sm font-bold uppercase tracking-[0.18em] text-black transition-all",
+            "mt-4 w-full rounded-2xl py-4.5 text-sm font-bold uppercase tracking-[0.18em] text-black transition-all cursor-pointer",
             !isStep1Valid || !isStep2Valid
               ? "cursor-not-allowed bg-white/10 text-white/30"
               : styles.goldGrad,
           )}
         >
-          OBTENIR UN DEVIS
+          DEMANDER UN DEVIS
         </motion.button>
       </div>
     );
@@ -783,7 +769,7 @@ function FlightSearchForm({
               vibrate(8);
               setStep((p) => Math.max(1, p - 1));
             }}
-            className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-white/50 hover:text-white"
+            className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-white/50 hover:text-white cursor-pointer"
           >
             <ArrowLeft size={10} /> Retour
           </button>
@@ -825,7 +811,7 @@ function FlightSearchForm({
               }}
               whileTap={{ scale: isStep1Valid ? 0.98 : 1 }}
               className={cx(
-                "mt-2 w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all",
+                "mt-2 w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all cursor-pointer",
                 isStep1Valid
                   ? "bg-[#d9b84f] text-black"
                   : "cursor-not-allowed bg-white/5 text-white/30",
@@ -854,7 +840,7 @@ function FlightSearchForm({
                     setTripType(t);
                   }}
                   className={cx(
-                    "rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all",
+                    "rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all cursor-pointer",
                     tripType === t
                       ? "bg-[#d9b84f] text-black shadow-md"
                       : "border border-[#d9b84f]/30 bg-transparent text-[#d9b84f]/60 hover:bg-[#d9b84f]/10",
@@ -865,32 +851,34 @@ function FlightSearchForm({
               ))}
             </div>
 
-            <div className={cx("grid gap-4", tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
-              <div className="relative">
-                <CalendarDays
-                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50"
-                  size={18}
-                />
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className={cx(styles.inputDark, "h-[48px] pl-12 [color-scheme:dark]")}
-                />
+            <div className={cx("grid gap-4 mt-2", tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
+              <div className="flex flex-col gap-1.5 w-full">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de départ</label>
+                <div className="relative">
+                  <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
+                  <input
+                    type="date"
+                    value={date}
+                    onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                    onChange={(e) => setDate(e.target.value)}
+                    className={cx(styles.inputDark, "h-[48px] pl-12 w-full [color-scheme:dark] cursor-pointer")}
+                  />
+                </div>
               </div>
 
               {tripType === "retour" && (
-                <div className="relative">
-                  <CalendarDays
-                    className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50"
-                    size={18}
-                  />
-                  <input
-                    type="date"
-                    value={returnDate}
-                    onChange={(e) => setReturnDate(e.target.value)}
-                    className={cx(styles.inputDark, "h-[48px] pl-12 [color-scheme:dark]")}
-                  />
+                <div className="flex flex-col gap-1.5 w-full">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de retour</label>
+                  <div className="relative">
+                    <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
+                    <input
+                      type="date"
+                      value={returnDate}
+                      onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                      onChange={(e) => setReturnDate(e.target.value)}
+                      className={cx(styles.inputDark, "h-[48px] pl-12 w-full [color-scheme:dark] cursor-pointer")}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -913,7 +901,7 @@ function FlightSearchForm({
               }}
               whileTap={{ scale: isStep2Valid ? 0.98 : 1 }}
               className={cx(
-                "mt-2 w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all",
+                "mt-2 w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all cursor-pointer",
                 isStep2Valid
                   ? "bg-[#d9b84f] text-black"
                   : "cursor-not-allowed bg-white/5 text-white/30",
@@ -961,7 +949,7 @@ function FlightSearchForm({
                 submit();
               }}
               whileTap={{ scale: 0.98 }}
-              className={`mt-4 w-full rounded-2xl py-4.5 text-sm font-bold uppercase tracking-[0.18em] text-black ${styles.goldGrad}`}
+              className={`mt-4 w-full rounded-2xl py-4.5 text-sm font-bold uppercase tracking-[0.18em] text-black cursor-pointer ${styles.goldGrad}`}
             >
               CONFIRMER LA DEMANDE
             </motion.button>
@@ -973,6 +961,17 @@ function FlightSearchForm({
 }
 
 export default function Home() {
+  const [isDesktop, setIsDesktop] = useState(true);
+  const [lang, setLang] = useState<"fr" | "en">("fr"); // Variable d'état pour la langue
+  const [isLoggedIn, setIsLoggedIn] = useState(false); // Variable d'état pour l'Espace Membre
+  
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 768);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   const [panelOpen, setPanelOpen] = useState(false);
   const [uberDrawerOpen, setUberDrawerOpen] = useState(false);
   const [jetCardOpen, setJetCardOpen] = useState(false);
@@ -997,12 +996,18 @@ export default function Home() {
     arr: null,
     pax: 1,
     date: "",
+    tripType: "simple",
+    returnDate: "",
     jet: flights[0].vehicles[0],
-    contact: { name: "", phone: "", email: "" },
+    contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
     services: {},
+    catering: [],
+    note: "",
+    isLocked: false,
+    isCustomRoute: false,
   });
 
-  const [jcForm, setJcForm] = useState({ hours: 25, name: "", email: "", phone: "" });
+  const [jcForm, setJcForm] = useState({ hours: 25, firstName: "", lastName: "", email: "", phone: "", nationality: "", dob: "" });
   const [selectedEmptyLeg, setSelectedEmptyLeg] = useState<EmptyLeg | null>(null);
 
   const experiencesRef = useRef<HTMLDivElement>(null);
@@ -1023,6 +1028,13 @@ export default function Home() {
   const selectedVehicleData =
     selectedFlightData.vehicles.find((v) => v.id === selectedVehicle) ?? selectedFlightData.vehicles[0];
   const detailedVehicleData = selectedFlightData.vehicles.find((v) => v.id === detailedVehicle);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("esijet_favorites");
+    if (saved) {
+      try { setFavorites(JSON.parse(saved)); } catch (e) { console.error(e); }
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedFlightData.vehicles.some((v) => v.id === selectedVehicle)) {
@@ -1072,11 +1084,17 @@ export default function Home() {
     setTimeout(() => setShowSuccess(false), 5000);
   };
 
-  const startBooking = (payload: BookingPayload) => {
+  const startBooking = (payload: BookingPayload, forceFlightId?: number) => {
     vibrate(8);
 
-    const matchedFlight =
-      flights.find((f) => f.from === payload.dep?.city && f.to === payload.arr?.city) ?? selectedFlightData;
+    const isCustom = !forceFlightId;
+    let matchedFlight = selectedFlightData;
+    
+    if (forceFlightId) {
+      matchedFlight = flights.find(f => f.id === forceFlightId) ?? flights[0];
+    } else {
+      matchedFlight = flights.find((f) => f.from === payload.dep?.city && f.to === payload.arr?.city) ?? selectedFlightData;
+    }
 
     const matchedJet =
       payload.jet ?? matchedFlight.vehicles.find((v) => v.seats >= payload.pax) ?? matchedFlight.vehicles[0];
@@ -1095,11 +1113,17 @@ export default function Home() {
       note: payload.note ?? "",
       jet: matchedJet,
       contact: {
-        name: payload.contact?.name ?? "",
+        firstName: payload.contact?.firstName ?? "",
+        lastName: payload.contact?.lastName ?? "",
         phone: payload.contact?.phone ?? "",
         email: payload.contact?.email ?? "",
+        nationality: payload.contact?.nationality ?? "",
+        dob: payload.contact?.dob ?? "",
       },
       services: { ...getDefaultServices(), ...(payload.services ?? {}) },
+      catering: payload.catering ?? [],
+      isLocked: payload.isLocked ?? false,
+      isCustomRoute: isCustom,
     });
     openBookingDrawer();
   };
@@ -1107,8 +1131,8 @@ export default function Home() {
   const startEmptyLegBooking = (leg: EmptyLeg) => {
     vibrate(8);
 
-    const depAirport = airports.find((a) => leg.from.includes(a.code) || a.city === leg.cityFrom) ?? null;
-    const arrAirport = airports.find((a) => leg.to.includes(a.code) || a.city === leg.cityTo) ?? null;
+    const depAirport = searchAirports(leg.cityFrom)[0] ?? null;
+    const arrAirport = searchAirports(leg.cityTo)[0] ?? null;
 
     const matchedFlight =
       flights.find((f) => f.from === leg.cityFrom && f.to === leg.cityTo) ?? flights[0];
@@ -1131,8 +1155,11 @@ export default function Home() {
       tripType: "simple",
       note: `Demande issue d’un empty leg ${leg.from} → ${leg.to}`,
       jet: matchedJet,
-      contact: { name: "", phone: "", email: "" },
+      contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
       services: getDefaultServices(),
+      catering: [],
+      isLocked: true,
+      isCustomRoute: false,
     });
 
     setEmptyLegDrawerOpen(false);
@@ -1140,7 +1167,8 @@ export default function Home() {
   };
 
   const submitJetCardRequest = () => {
-    if (!jcForm.name.trim() || !isValidInternationalPhone(jcForm.phone) || !isValidEmail(jcForm.email)) return;
+    const isJcValid = !!(jcForm.firstName.trim() && jcForm.lastName.trim() && isValidInternationalPhone(jcForm.phone) && isValidEmail(jcForm.email) && jcForm.nationality.trim() && jcForm.dob.trim());
+    if (!isJcValid) return;
     vibrate(8);
     setJetCardOpen(false);
     setPanelOpen(false);
@@ -1152,18 +1180,28 @@ export default function Home() {
   const handleFlightClick = (id: number) => {
     vibrate(8);
     const f = flights.find((x) => x.id === id) ?? flights[0];
-    setSelectedFlight(f.id);
-    setSelectedVehicle(f.vehicles[0].id);
-    setBd((prev) => ({ ...prev, jet: f.vehicles[0] }));
-    setDetailedVehicle(null);
-    setPhotoIndex(0);
-    setDrawerStep(2);
-    setUberDrawerOpen(true);
+    
+    const depAirport = getPredefinedAirport(f.from);
+    const arrAirport = getPredefinedAirport(f.to);
+    
+    startBooking({ 
+      dep: depAirport, 
+      arr: arrAirport, 
+      pax: 1, 
+      date: "", 
+      tripType: "simple", 
+      contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
+      isLocked: true
+    }, f.id);
   };
 
   const toggleFav = (id: number) => {
     vibrate(8);
-    setFavorites((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setFavorites((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      localStorage.setItem("esijet_favorites", JSON.stringify(next));
+      return next;
+    });
   };
 
   const handleDrawerDragEnd = (_: unknown, info: PanInfo) => {
@@ -1190,8 +1228,15 @@ export default function Home() {
   }, [bd]);
 
   const isStep2Valid = useMemo(() => !!bd.jet, [bd]);
+  
   const isStep4Valid = useMemo(
-    () => !!bd.contact?.name?.trim() && isValidInternationalPhone(bd.contact?.phone) && isValidEmail(bd.contact?.email),
+    () =>
+      !!bd.contact?.firstName?.trim() &&
+      !!bd.contact?.lastName?.trim() &&
+      !!bd.contact?.nationality?.trim() &&
+      !!bd.contact?.dob?.trim() &&
+      isValidInternationalPhone(bd.contact?.phone) &&
+      isValidEmail(bd.contact?.email),
     [bd],
   );
 
@@ -1222,6 +1267,14 @@ export default function Home() {
     finalizeBooking(bd);
   };
 
+  const handleUberDrawerChange = (open: boolean) => {
+    setUberDrawerOpen(open);
+    if (!open) {
+      setDetailedVehicle(null);
+      setPhotoIndex(0);
+    }
+  };
+
   const featureBlocks = useMemo(
     () => [
       {
@@ -1242,6 +1295,1032 @@ export default function Home() {
     ],
     [],
   );
+
+  const getMapOrigin = () => {
+    if (selectedEmptyLeg) return selectedEmptyLeg.origin;
+    if (bd.dep && "lat" in bd.dep && typeof (bd.dep as any).lat === "number") return [(bd.dep as any).lat, (bd.dep as any).lon];
+    if (bd.dep && "coords" in bd.dep && Array.isArray((bd.dep as any).coords)) return (bd.dep as any).coords;
+    return selectedFlightData.origin;
+  };
+
+  const getMapDest = () => {
+    if (selectedEmptyLeg) return selectedEmptyLeg.dest;
+    if (bd.arr && "lat" in bd.arr && typeof (bd.arr as any).lat === "number") return [(bd.arr as any).lat, (bd.arr as any).lon];
+    if (bd.arr && "coords" in bd.arr && Array.isArray((bd.arr as any).coords)) return (bd.arr as any).coords;
+    return selectedFlightData.dest;
+  };
+
+  const isJcValid = !!(jcForm.firstName.trim() && jcForm.lastName.trim() && isValidInternationalPhone(jcForm.phone) && isValidEmail(jcForm.email) && jcForm.nationality.trim() && jcForm.dob.trim());
+
+  // Contenu modale Empty Leg
+  const emptyLegContent = (
+    <div className="relative z-50 mx-auto flex h-[85svh] w-full max-w-[1000px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[80vh] md:flex-row">
+      <div className="relative h-[35%] w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
+        <div className="pointer-events-none absolute inset-0 grayscale opacity-40 mix-blend-screen">
+          {emptyLegDrawerOpen && selectedEmptyLeg && (
+            <MapBox origin={selectedEmptyLeg.origin} dest={selectedEmptyLeg.dest} />
+          )}
+        </div>
+
+        <button
+          onClick={() => setEmptyLegDrawerOpen(false)}
+          className="absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/30 bg-[#050608]/80 text-[#d9b84f] backdrop-blur-xl transition hover:bg-[#d9b84f]/10 cursor-pointer"
+        >
+          <X size={18} />
+        </button>
+
+        <div className="absolute bottom-5 left-5 z-20">
+          <span className="rounded-full bg-[#d9b84f] px-4 py-2 text-[11px] font-extrabold uppercase tracking-widest text-black shadow-[0_0_15px_rgba(217,184,79,0.5)]">
+            Offre {selectedEmptyLeg?.price}
+          </span>
+        </div>
+      </div>
+
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#0a0a0c] p-6 text-white md:order-1 md:p-10">
+        <h2 className="mb-1 text-3xl font-light text-white">Vol de positionnement</h2>
+        <p className="mb-10 text-xs uppercase tracking-widest text-[#d9b84f]/70">
+          Opportunité de dernière minute.
+        </p>
+
+        {selectedEmptyLeg && (
+          <div className="space-y-8">
+            <div className="rounded-[24px] border border-[#d9b84f]/20 bg-[#d9b84f]/5 p-6">
+              <div className="mb-6 flex items-center gap-3">
+                <PlaneTakeoff size={20} className="text-[#d9b84f]" />
+                <span className="text-xl font-bold text-white">
+                  {selectedEmptyLeg.cityFrom}
+                  <ArrowRight size={16} className="mx-2 inline text-[#d9b84f]/50" />
+                  {selectedEmptyLeg.cityTo}
+                </span>
+              </div>
+
+              <div className="space-y-4 text-sm text-white/80">
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Départ</span>
+                  <span className="text-base font-medium text-[#d9b84f]">{selectedEmptyLeg.date}</span>
+                </div>
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Appareil</span>
+                  <span className="font-medium">{selectedEmptyLeg.jet}</span>
+                </div>
+                <div className="flex justify-between pb-1">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Capacité max</span>
+                  <span className="font-medium">{selectedEmptyLeg.pax} passagers</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                vibrate(8);
+                startEmptyLegBooking(selectedEmptyLeg);
+              }}
+              className={`cursor-pointer w-full rounded-2xl py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all ${styles.goldGrad}`}
+            >
+              Poursuivre la réservation
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Contenu modale Jet Card
+  const jetCardContent = (
+    <div className="relative z-50 mx-auto flex h-[82svh] w-full max-w-[1150px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[78vh] md:flex-row">
+      <div className="relative h-[35%] w-full shrink-0 bg-black border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
+        <Image src="/jet.jpg" alt="Jet Card ESIJET" fill className="object-cover opacity-40 grayscale mix-blend-screen" />
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-[#000000] to-transparent p-6 text-center">
+            <Crown size={56} className="mb-4 text-[#d9b84f] drop-shadow-[0_0_15px_rgba(217,184,79,0.5)]" />
+            <h3 className="mb-2 text-3xl font-light text-white">Jet Card</h3>
+            <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">L'ultime liberté de voler.</p>
+        </div>
+        <button
+          onClick={() => setJetCardOpen(false)}
+          aria-label="Fermer"
+          className="cursor-pointer absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-xl transition hover:bg-white/20"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#0a0a0c] p-6 text-white md:order-1 md:p-10">
+          <h2 className="mb-1 text-2xl font-light">Adhésion Jet Card</h2>
+          <p className="mb-10 text-xs text-white/50">Configurez votre abonnement d'heures de vol.</p>
+
+          <div className="space-y-8">
+            <div>
+                <label className="mb-4 block text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">Volume d'heures</label>
+                <div className="grid grid-cols-3 gap-3">
+                  {[25, 50, 100].map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => { vibrate(8); setJcForm({ ...jcForm, hours: h }); }}
+                        className={cx(
+                          "cursor-pointer rounded-2xl border py-4 text-sm font-bold transition-all",
+                          jcForm.hours === h
+                            ? "border-[#d9b84f] bg-[#d9b84f]/10 text-[#d9b84f] shadow-[0_4px_15px_rgba(217,184,79,0.2)]"
+                            : "border-white/10 bg-white/[0.02] text-white/50 hover:border-[#d9b84f]/50"
+                        )}
+                      >
+                        {h}h
+                      </button>
+                  ))}
+                </div>
+            </div>
+
+            <div>
+                <label className="mb-4 block text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">Informations passager</label>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className={styles.inputWrapper}>
+                      <User className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                      <input
+                        placeholder="Prénom"
+                        value={jcForm.firstName}
+                        onChange={(e) => setJcForm({ ...jcForm, firstName: e.target.value })}
+                        className={styles.inputField}
+                      />
+                    </div>
+                    <div className={styles.inputWrapper}>
+                      <input
+                        placeholder="Nom"
+                        value={jcForm.lastName}
+                        onChange={(e) => setJcForm({ ...jcForm, lastName: e.target.value })}
+                        className={styles.inputField}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <div className={styles.inputWrapper}>
+                      <MessageSquare className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                      <input
+                        placeholder="Adresse email"
+                        type="email"
+                        value={jcForm.email}
+                        onChange={(e) => setJcForm({ ...jcForm, email: e.target.value })}
+                        className={styles.inputField}
+                      />
+                    </div>
+                    {jcForm.email && !isValidEmail(jcForm.email) && (
+                      <p className="text-xs text-red-400">Entrez une adresse email valide.</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className={styles.inputWrapper}>
+                      <PhoneCall className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                      <div className="flex-1">
+                        <PhoneInput
+                          international
+                          defaultCountry="FR"
+                          countryCallingCodeEditable={false}
+                          placeholder="Téléphone avec indicatif"
+                          value={jcForm.phone}
+                          onChange={(value) => setJcForm({ ...jcForm, phone: value || "" })}
+                          className="phone-input-esijet"
+                        />
+                      </div>
+                    </div>
+                    {jcForm.phone && !isValidInternationalPhone(jcForm.phone) && (
+                      <p className="text-xs text-red-400">Entrez un numéro valide avec indicatif.</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Nationalité</label>
+                      <div className={styles.inputWrapper}>
+                        <Globe className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                        <input
+                          type="text"
+                          placeholder="Ex: Française"
+                          value={jcForm.nationality}
+                          onChange={(e) => setJcForm({ ...jcForm, nationality: e.target.value })}
+                          className={styles.inputField}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de naissance</label>
+                      <div className={styles.inputWrapper}>
+                        <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                        <input
+                          type="date"
+                          value={jcForm.dob}
+                          onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                          onChange={(e) => setJcForm({ ...jcForm, dob: e.target.value })}
+                          className={cx(styles.inputField, "cursor-pointer")}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+            </div>
+
+            <button
+              disabled={!isJcValid}
+              onClick={submitJetCardRequest}
+              className={cx(
+                "cursor-pointer mt-4 w-full rounded-2xl py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all",
+                !isJcValid ? "cursor-not-allowed bg-white/10 text-white/30" : styles.goldGrad
+              )}
+            >
+              Demander mon adhésion
+            </button>
+          </div>
+      </div>
+    </div>
+  );
+
+  // Contenu modale de Réservation Principale (Booking / Uber Drawer)
+  const bookingContent = (
+    <div className="relative z-50 mx-auto flex h-[82svh] w-full max-w-[1150px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[78vh] md:flex-row">
+      <div className="relative h-[28%] w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
+        <div className="pointer-events-none absolute inset-0 grayscale opacity-40 mix-blend-screen">
+          {uberDrawerOpen && (
+            <MapBox origin={getMapOrigin()} dest={getMapDest()} />
+          )}
+        </div>
+
+        <button
+          onClick={() => {
+            vibrate(8);
+            setUberDrawerOpen(false);
+          }}
+          aria-label="Fermer"
+          className="cursor-pointer absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/30 bg-[#050608]/80 text-[#d9b84f] backdrop-blur-xl transition hover:bg-[#d9b84f]/10"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col bg-[#050608] text-white md:order-1">
+        <div className="flex min-h-[80px] shrink-0 items-center justify-between px-5 pt-5 md:px-6 md:pt-10">
+          {detailedVehicle ? (
+            <button
+              onClick={() => {
+                vibrate(8);
+                setDetailedVehicle(null);
+                setPhotoIndex(0);
+              }}
+              className="cursor-pointer flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white/70 transition hover:border-[#d9b84f]/50 hover:text-[#d9b84f]"
+            >
+              <ArrowLeft size={16} /> Retour aux jets
+            </button>
+          ) : selectedEmptyLeg ? (
+            <div className="flex items-center gap-3">
+              <span className="rounded-full bg-[#d9b84f]/20 px-3 py-1 text-[9px] font-bold uppercase tracking-widest text-[#d9b84f]">
+                Vol à vide
+              </span>
+              <span className="text-[12px] font-bold uppercase tracking-widest text-white truncate max-w-[200px] md:max-w-none">
+                {selectedEmptyLeg.cityFrom} <ArrowRight className="inline mx-1" size={12} /> {selectedEmptyLeg.cityTo}
+              </span>
+            </div>
+          ) : bd.isCustomRoute ? (
+            <div className="flex items-center gap-3">
+              <span className="rounded-full bg-[#d9b84f]/20 px-3 py-1 text-[9px] font-bold uppercase tracking-widest text-[#d9b84f]">
+                Vol sur mesure
+              </span>
+              <span className="text-[12px] font-bold uppercase tracking-widest text-white truncate max-w-[200px] md:max-w-none">
+                {bd.dep?.city} <ArrowRight className="inline mx-1" size={12} /> {bd.arr?.city}
+              </span>
+            </div>
+          ) : (
+            <div className="flex gap-2 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {flights.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => {
+                    vibrate(8);
+                    setSelectedFlight(f.id);
+                    setSelectedVehicle(f.vehicles[0].id);
+                    setBd((prev) => ({
+                      ...prev,
+                      jet: f.vehicles[0],
+                      dep: getPredefinedAirport(f.from),
+                      arr: getPredefinedAirport(f.to),
+                      isLocked: true,
+                      isCustomRoute: false,
+                    }));
+                    setDetailedVehicle(null);
+                    setPhotoIndex(0);
+                  }}
+                  className={cx(
+                    "cursor-pointer whitespace-nowrap rounded-full px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest transition",
+                    selectedFlight === f.id
+                      ? "bg-[#d9b84f] text-black shadow-lg"
+                      : "border border-white/15 text-white/60 hover:border-[#d9b84f]/30 hover:bg-white/5",
+                  )}
+                >
+                  {f.from} → {f.to}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {drawerStep === 2 && detailedVehicle && (
+            <span className="ml-auto text-[11px] font-bold uppercase tracking-widest text-[#d9b84f] shrink-0">
+              Étape 2 / 5
+            </span>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 pb-4 md:px-6 [-ms-overflow-style:none] [mask-image:linear-gradient(to_bottom,black_85%,transparent_100%)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <AnimatePresence mode="wait">
+            {drawerStep === 1 && (
+              <motion.div
+                key="s1"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="mt-4 space-y-5 pb-10"
+              >
+                <div>
+                  <h2 className="mb-1 text-2xl font-light text-white">Votre itinéraire</h2>
+                  <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
+                    Où souhaitez-vous aller ?
+                  </p>
+                </div>
+
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {(["simple", "retour"] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => {
+                        vibrate(8);
+                        setBd({ ...bd, tripType: t });
+                      }}
+                      className={cx(
+                        "cursor-pointer rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all",
+                        bd.tripType === t
+                          ? "bg-[#d9b84f] text-black shadow-md"
+                          : "border border-[#d9b84f]/30 bg-transparent text-[#d9b84f]/60 hover:bg-[#d9b84f]/10",
+                      )}
+                    >
+                      {t === "simple" ? "Aller simple" : "Aller-retour"}
+                    </button>
+                  ))}
+                </div>
+
+                <CustomSelect
+                  type="airport"
+                  val={bd.dep}
+                  setVal={(v: Airport) => setBd({ ...bd, dep: v })}
+                  Icon={PlaneTakeoff}
+                  ph="Aéroport de départ"
+                  disabled={bd.isLocked}
+                />
+                <CustomSelect
+                  type="airport"
+                  val={bd.arr}
+                  setVal={(v: Airport) => setBd({ ...bd, arr: v })}
+                  Icon={PlaneLanding}
+                  ph="Aéroport d'arrivée"
+                  disabled={bd.isLocked}
+                />
+
+                <div className={cx("grid gap-4 mt-2", bd.tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
+                  <div className="flex flex-col gap-1.5 w-full">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de départ</label>
+                    <div className={styles.inputWrapper}>
+                      <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                      <input
+                        type="date"
+                        value={bd.date}
+                        onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                        onChange={(e) => setBd({ ...bd, date: e.target.value })}
+                        className={cx(styles.inputField, "cursor-pointer")}
+                      />
+                    </div>
+                  </div>
+
+                  {bd.tripType === "retour" && (
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de retour</label>
+                      <div className={styles.inputWrapper}>
+                        <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                        <input
+                          type="date"
+                          value={bd.returnDate || ""}
+                          onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                          onChange={(e) => setBd({ ...bd, returnDate: e.target.value })}
+                          className={cx(styles.inputField, "cursor-pointer")}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <CustomSelect
+                  type="pax"
+                  pax={bd.pax}
+                  setPax={(p: number) => setBd({ ...bd, pax: p })}
+                  maxPax={30}
+                  Icon={Users}
+                  ph="Passagers"
+                />
+              </motion.div>
+            )}
+
+            {drawerStep === 2 && detailedVehicle && detailedVehicleData ? (
+              <motion.div
+                key="details"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="mt-2 space-y-6 pb-12"
+              >
+                <div className="relative h-56 w-full overflow-hidden rounded-[24px] border border-[#d9b84f]/20">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={photoIndex}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="absolute inset-0 cursor-grab active:cursor-grabbing"
+                      drag="x"
+                      dragConstraints={{ left: 0, right: 0 }}
+                      dragElastic={0.2}
+                      onDragEnd={(_, { offset }) => {
+                        if (offset.x <= -40) nextPhoto();
+                        if (offset.x >= 40) prevPhoto();
+                      }}
+                    >
+                      <Image
+                        src={detailedVehicleData.images[photoIndex]}
+                        alt={detailedVehicleData.name}
+                        fill
+                        sizes="(max-width: 768px) 100vw, 50vw"
+                        quality={100}
+                        className="pointer-events-none object-cover opacity-90"
+                      />
+                    </motion.div>
+                  </AnimatePresence>
+
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+
+                  <button
+                    onClick={prevPhoto}
+                    aria-label="Photo précédente"
+                    className="cursor-pointer absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-[#d9b84f]/30 bg-[#050608]/60 p-2 text-[#d9b84f] backdrop-blur-md"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <button
+                    onClick={nextPhoto}
+                    aria-label="Photo suivante"
+                    className="cursor-pointer absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-[#d9b84f]/30 bg-[#050608]/60 p-2 text-[#d9b84f] backdrop-blur-md"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+
+                  <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-2">
+                    {detailedVehicleData.images.map((_, i) => (
+                      <div
+                        key={i}
+                        className={cx(
+                          "h-1.5 rounded-full transition-all duration-300",
+                          photoIndex === i ? "w-8 bg-[#d9b84f]" : "w-1.5 bg-white/40",
+                        )}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h2 className="text-2xl font-bold text-white">{detailedVehicleData.name}</h2>
+                    {detailedVehicleData.pop && (
+                      <span className="rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-3 py-1 text-[9px] font-extrabold uppercase tracking-widest text-[#d9b84f] shadow-[0_0_10px_rgba(217,184,79,0.2)]">
+                        Recommandé
+                      </span>
+                    )}
+                  </div>
+                  <p className="mb-4 text-[12px] font-bold uppercase tracking-[0.2em] text-[#d9b84f]/80">
+                    {detailedVehicleData.subtitle}
+                  </p>
+                  <p className="text-[15px] leading-relaxed text-white/70">
+                    {detailedVehicleData.desc}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 border-t border-[#d9b84f]/15 pt-6">
+                  <div className="rounded-[20px] border border-white/5 bg-white/[0.03] p-3 text-center shadow-sm">
+                    <Users className="mx-auto mb-2 text-[#d9b84f]" size={18} />
+                    <p className="text-sm font-bold text-white">{detailedVehicleData.seats} pax</p>
+                  </div>
+                  <div className="rounded-[20px] border border-white/5 bg-white/[0.03] p-3 text-center shadow-sm">
+                    <Wind className="mx-auto mb-2 text-[#d9b84f]" size={18} />
+                    <p className="text-sm font-bold text-white">{detailedVehicleData.speed}</p>
+                  </div>
+                  <div className="rounded-[20px] border border-white/5 bg-white/[0.03] p-3 text-center shadow-sm">
+                    <Luggage className="mx-auto mb-2 text-[#d9b84f]" size={18} />
+                    <p className="text-sm font-bold text-white">{detailedVehicleData.bag}</p>
+                  </div>
+                </div>
+              </motion.div>
+            ) : drawerStep === 2 ? (
+              <motion.div
+                key="list"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="mt-2 space-y-4 pb-12"
+              >
+                <div className="mb-4">
+                  <h2 className="mb-1 text-xl font-light text-white">Choix de l'appareil</h2>
+                  <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
+                    Sélectionnez le jet adapté à vos besoins.
+                  </p>
+                </div>
+
+                {selectedFlightData.vehicles.map((v) => {
+                  const isSelected = bd.jet?.id === v.id;
+                  return (
+                    <div
+                      key={v.id}
+                      onClick={() => {
+                        vibrate(8);
+                        setSelectedVehicle(v.id);
+                        setBd({ ...bd, jet: v });
+                      }}
+                      className={cx(
+                        "cursor-pointer rounded-[28px] border p-5 transition-all",
+                        isSelected
+                          ? "scale-[1.02] border-[#d9b84f] bg-[#d9b84f]/10 text-white shadow-[0_10px_30px_rgba(217,184,79,0.15)]"
+                          : "border-white/10 bg-transparent text-white hover:border-[#d9b84f]/40",
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <h3 className="text-lg font-bold">{v.name}</h3>
+                            <span className="rounded-sm bg-[#d9b84f] px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-black">
+                              {v.price}
+                            </span>
+                          </div>
+                          <p
+                            className={cx(
+                              "mt-1 text-xs font-medium uppercase tracking-widest",
+                              isSelected ? "text-[#d9b84f]" : "text-white/50",
+                            )}
+                          >
+                            {v.subtitle}
+                          </p>
+                          <div
+                            className={cx(
+                              "mt-3 flex items-center gap-3 text-[11px]",
+                              isSelected ? "text-white/90" : "text-white/50",
+                            )}
+                          >
+                            <span>{v.seats} pax</span>
+                            <span>•</span>
+                            <span>{v.time}</span>
+                            {v.pop && (
+                              <>
+                                <span>•</span>
+                                <span className={isSelected ? "text-[#d9b84f]" : "text-[#d9b84f]/70"}>
+                                  Recommandé
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* BOUTON DÉTAILS SOUS FORME DE MINIATURE */}
+                        <button
+                          aria-label="Voir les photos"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            vibrate(8);
+                            setSelectedVehicle(v.id);
+                            setDetailedVehicle(v.id);
+                            setPhotoIndex(0);
+                            setBd({ ...bd, jet: v });
+                          }}
+                          className={cx(
+                            "relative shrink-0 w-16 h-12 md:w-20 md:h-14 overflow-hidden rounded-xl border transition-all cursor-pointer group",
+                            isSelected ? "border-[#d9b84f] shadow-[0_0_15px_rgba(217,184,79,0.3)]" : "border-white/10 hover:border-[#d9b84f]/50"
+                          )}
+                        >
+                          <Image
+                            src={v.images[0]}
+                            alt={v.name}
+                            fill
+                            className="object-cover transition-transform duration-500 group-hover:scale-110"
+                          />
+                          <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-[10px] md:text-xs font-bold tracking-widest text-white shadow-sm drop-shadow-md">
+                              +{v.images.length - 1}
+                            </span>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </motion.div>
+            ) : null}
+
+            {drawerStep === 3 && (
+              <motion.div
+                key="s3"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="mt-4 space-y-4 pb-10"
+              >
+                <div className="mb-6">
+                  <h2 className="mb-1 text-2xl font-light text-white">Options de vol</h2>
+                  <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
+                    Sélectionnez vos besoins spécifiques à bord.
+                  </p>
+                </div>
+
+                {flightOptions.map((s) => {
+                  const isActive = bd.services?.[s.id];
+                  return (
+                    <div
+                      key={s.id}
+                      onClick={() => {
+                        vibrate(8);
+                        setBd({
+                          ...bd,
+                          services: { ...(bd.services || {}), [s.id]: !isActive },
+                        });
+                      }}
+                      className={cx(
+                        "cursor-pointer flex items-center gap-5 rounded-[24px] border p-5 transition-all",
+                        isActive
+                          ? "border-[#d9b84f] bg-[#d9b84f]/10 shadow-[0_10px_20px_rgba(217,184,79,0.15)]"
+                          : "border-white/10 bg-white/[0.02] hover:border-[#d9b84f]/40",
+                      )}
+                    >
+                      <div
+                        className={cx(
+                          "flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition-colors",
+                          isActive ? "bg-[#d9b84f] text-black" : "bg-white/5 text-white/40",
+                        )}
+                      >
+                        <s.icon size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-white">{s.name}</h3>
+                        <p className="mt-1 text-[11px] text-white/50">{s.desc}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Ajout de la section Restauration / Catering */}
+                <div className="mt-8 border-t border-white/10 pt-6">
+                  <h3 className="mb-4 text-[11px] font-bold uppercase tracking-widest text-[#d9b84f] flex items-center gap-2">
+                    <Utensils size={14} /> Restauration à bord
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {cateringOptions.map((c) => {
+                      const isActive = bd.catering?.includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            vibrate(8);
+                            const current = bd.catering || [];
+                            const next = isActive
+                              ? current.filter(id => id !== c.id)
+                              : [...current, c.id];
+                            setBd({ ...bd, catering: next });
+                          }}
+                          className={cx(
+                            "cursor-pointer rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all",
+                            isActive
+                              ? "bg-[#d9b84f] text-black shadow-md border border-[#d9b84f]"
+                              : "border border-white/10 bg-white/[0.02] text-white/50 hover:border-[#d9b84f]/40 hover:text-white"
+                          )}
+                        >
+                          {c.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className={cx(styles.inputWrapper, "items-start mt-6")}>
+                  <MessageSquare className="mr-3 mt-0.5 shrink-0 text-[#d9b84f]/60" size={18} />
+                  <textarea
+                    value={bd.note || ""}
+                    onChange={(e) => setBd({ ...bd, note: e.target.value })}
+                    placeholder="Notes particulières (ex: demandes diététiques, transferts...)"
+                    className={cx(styles.inputField, "h-20 resize-none")}
+                  />
+                </div>
+              </motion.div>
+            )}
+
+            {drawerStep === 4 && (
+              <motion.div
+                key="s4"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="mt-4 space-y-4 pb-10"
+              >
+                <div className="mb-6">
+                  <h2 className="mb-1 text-2xl font-light text-white">Informations passager</h2>
+                  <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
+                    Coordonnées requises pour le plan de vol.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className={styles.inputWrapper}>
+                      <User className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                      <input
+                        placeholder="Prénom"
+                        value={bd.contact?.firstName ?? ""}
+                        onChange={(e) =>
+                          setBd({ ...bd, contact: { ...bd.contact!, firstName: e.target.value } })
+                        }
+                        className={styles.inputField}
+                      />
+                    </div>
+                    <div className={styles.inputWrapper}>
+                      <input
+                        placeholder="Nom"
+                        value={bd.contact?.lastName ?? ""}
+                        onChange={(e) =>
+                          setBd({ ...bd, contact: { ...bd.contact!, lastName: e.target.value } })
+                        }
+                        className={styles.inputField}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className={styles.inputWrapper}>
+                      <MessageSquare className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                      <input
+                        placeholder="Adresse email"
+                        type="email"
+                        value={bd.contact?.email ?? ""}
+                        onChange={(e) =>
+                          setBd({ ...bd, contact: { ...bd.contact!, email: e.target.value } })
+                        }
+                        className={styles.inputField}
+                      />
+                    </div>
+                    {bd.contact?.email && !isValidEmail(bd.contact.email) && (
+                      <p className="text-xs text-red-400">Entrez une adresse email valide.</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className={styles.inputWrapper}>
+                      <PhoneCall className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                      <div className="flex-1">
+                        <PhoneInput
+                          international
+                          defaultCountry="FR"
+                          countryCallingCodeEditable={false}
+                          placeholder="Téléphone avec indicatif"
+                          value={bd.contact?.phone || ""}
+                          onChange={(value) =>
+                            setBd({ ...bd, contact: { ...bd.contact!, phone: value || "" } })
+                          }
+                          className="phone-input-esijet"
+                        />
+                      </div>
+                    </div>
+                    {bd.contact?.phone && !isValidInternationalPhone(bd.contact.phone) && (
+                      <p className="text-xs text-red-400">Entrez un numéro valide avec indicatif.</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Nationalité</label>
+                      <div className={styles.inputWrapper}>
+                        <Globe className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                        <input
+                          type="text"
+                          placeholder="Ex: Française"
+                          value={bd.contact?.nationality ?? ""}
+                          onChange={(e) => setBd({ ...bd, contact: { ...bd.contact!, nationality: e.target.value } })}
+                          className={styles.inputField}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de naissance</label>
+                      <div className={styles.inputWrapper}>
+                        <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                        <input
+                          type="date"
+                          value={bd.contact?.dob ?? ""}
+                          onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                          onChange={(e) => setBd({ ...bd, contact: { ...bd.contact!, dob: e.target.value } })}
+                          className={cx(styles.inputField, "cursor-pointer")}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {drawerStep === 5 && (
+              <motion.div
+                key="s5"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="mt-4 space-y-6 pb-10"
+              >
+                <div className="mb-2">
+                  <h2 className="mb-1 text-2xl font-light text-white">Récapitulatif final</h2>
+                  <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
+                    Vérifiez les détails avant l'envoi de la demande.
+                  </p>
+                </div>
+
+                <div className="rounded-[24px] border border-[#d9b84f]/20 bg-[#d9b84f]/5 p-6 shadow-sm">
+                  <div className="mb-6 flex items-center gap-3">
+                    <PlaneTakeoff size={18} className="text-[#d9b84f]" />
+                    <span className="text-lg font-bold text-white">
+                      {bd.dep?.city}
+                      <ArrowRight size={14} className="mx-2 inline text-[#d9b84f]/50" />
+                      {bd.arr?.city}
+                    </span>
+                  </div>
+
+                  <div className="space-y-4 text-sm text-white/90">
+                    <div className="flex justify-between border-b border-white/10 pb-4">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                        Trajet
+                      </span>
+                      <span className="font-medium text-right">
+                        {bd.tripType === "retour" ? "Aller-retour" : "Aller simple"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b border-white/10 pb-4">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                        Dates
+                      </span>
+                      <span className="font-medium text-right text-[#d9b84f]">
+                        {bd.date || "Date flexible"}{" "}
+                        {bd.tripType === "retour" && bd.returnDate ? ` - ${bd.returnDate}` : ""}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b border-white/10 pb-4">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                        Passagers
+                      </span>
+                      <span className="font-medium text-right">{bd.pax} pers.</span>
+                    </div>
+                    <div className="flex justify-between border-b border-white/10 pb-4">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                        Appareil
+                      </span>
+                      <span className="font-medium text-right">{bd.jet?.name}</span>
+                    </div>
+                    {Object.entries(bd.services || {}).filter(([_, v]) => v).length > 0 && (
+                      <div className="flex justify-between border-b border-white/10 pb-4">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                          Options
+                        </span>
+                        <span className="font-medium text-right">
+                          {Object.keys(bd.services || {})
+                            .filter((k) => bd.services?.[k])
+                            .map((k) => flightOptions.find((o) => o.id === k)?.name)
+                            .join(", ")}
+                        </span>
+                      </div>
+                    )}
+                    {bd.catering && bd.catering.length > 0 && (
+                      <div className="flex justify-between border-b border-white/10 pb-4">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                          Restauration
+                        </span>
+                        <span className="font-medium text-right text-[#d9b84f]">
+                          {bd.catering.map(id => cateringOptions.find(c => c.id === id)?.label).join(", ")}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-b border-white/10 pb-4">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                        Contact
+                      </span>
+                      <span className="font-medium text-right">
+                        {bd.contact?.firstName} {bd.contact?.lastName}
+                        <br />
+                        <span className="text-xs text-white/50">{bd.contact?.phone} • {bd.contact?.email}</span>
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b border-white/10 pb-4">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                        Passager principal
+                      </span>
+                      <span className="font-medium text-right">
+                        {bd.contact?.nationality}
+                        <br />
+                        <span className="text-xs text-white/50">Né(e) le {bd.contact?.dob}</span>
+                      </span>
+                    </div>
+                    <div className="flex justify-between pt-2">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">
+                        Estimation
+                      </span>
+                      <span className="text-lg font-bold text-[#d9b84f]">{bd.jet?.price}</span>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="mb-2 flex shrink-0 gap-4 border-t border-[#d9b84f]/20 bg-[#050608] p-4 md:p-6">
+          {drawerStep > 1 && (
+            <button
+              onClick={() => setDrawerStep((s) => s - 1)}
+              className="cursor-pointer flex-1 rounded-2xl border border-white/10 py-4.5 text-xs font-bold uppercase tracking-widest transition-all hover:bg-white/5"
+            >
+              Retour
+            </button>
+          )}
+          <button
+            disabled={isNextDisabled}
+            onClick={handleNextStep}
+            className={cx(
+              "cursor-pointer flex-[2] rounded-[20px] py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all",
+              isNextDisabled ? "cursor-not-allowed bg-white/10 text-white/30" : styles.goldGrad,
+            )}
+          >
+            {detailedVehicle
+              ? "Choisir cet appareil"
+              : drawerStep === 5
+                ? "Envoyer la demande"
+                : "Étape suivante"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Fonction Helper de rendu Responsive (Modal PC / Drawer Mobile)
+  const renderModal = (
+    open: boolean,
+    onOpenChange: (o: boolean) => void,
+    title: string,
+    desc: string,
+    content: React.ReactNode
+  ) => {
+    if (isDesktop) {
+      return (
+        <AnimatePresence>
+          {open && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => onOpenChange(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-md cursor-pointer"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="relative z-10 w-full px-6 flex justify-center"
+              >
+                {content}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      );
+    }
+
+    return (
+      <Drawer open={open} onOpenChange={onOpenChange}>
+        <DrawerContent className="border-none bg-transparent p-0 shadow-none">
+          <DrawerHeader className="sr-only">
+            <DrawerTitle>{title}</DrawerTitle>
+            <DrawerDescription>{desc}</DrawerDescription>
+          </DrawerHeader>
+          {content}
+        </DrawerContent>
+      </Drawer>
+    );
+  };
 
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-[#050505] text-white antialiased">
@@ -1290,54 +2369,78 @@ export default function Home() {
               ESIJET
             </h1>
 
-            <nav className="flex items-center gap-5 xl:gap-8">
+            <nav className="flex items-center gap-4 xl:gap-6">
               <button
                 onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm"
+                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm cursor-pointer"
               >
                 Accueil
               </button>
               <button
                 onClick={() => goTo("experiences")}
-                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm"
+                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm cursor-pointer"
               >
-                Flotte
+                Transferts
               </button>
               <button
                 onClick={() => goTo("emptylegs")}
-                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm"
+                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm cursor-pointer"
               >
                 Vols à vide
               </button>
               <button
                 onClick={() => goTo("privilege")}
-                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm"
+                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm cursor-pointer"
               >
                 Privilège
               </button>
               <button
                 onClick={() => goTo("about")}
-                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm"
+                className="text-xs text-white/70 transition hover:text-[#d9b84f] sm:text-sm cursor-pointer"
               >
                 À propos
               </button>
+              
+              <div className="flex items-center gap-3 border-l border-white/20 pl-4 ml-2">
+                <button
+                  onClick={() => setLang(lang === "fr" ? "en" : "fr")}
+                  className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/50 hover:text-[#d9b84f] transition cursor-pointer"
+                >
+                  <Globe size={14} />
+                  {lang === "fr" ? "EN" : "FR"}
+                </button>
+
+                <button
+                  onClick={() => setIsLoggedIn(!isLoggedIn)}
+                  className={cx(
+                    "flex items-center gap-2 rounded-full border px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition cursor-pointer",
+                    isLoggedIn 
+                      ? "border-[#d9b84f]/50 bg-[#d9b84f]/10 text-[#d9b84f]" 
+                      : "border-white/20 bg-white/5 text-white/70 hover:border-white/40 hover:text-white"
+                  )}
+                >
+                  {isLoggedIn ? <User size={14} className="text-[#d9b84f]" /> : <LogOut size={14} className="rotate-180" />}
+                  {isLoggedIn ? "Mon Espace" : "Connexion VIP"}
+                </button>
+              </div>
+
               <motion.button
                 whileTap={{ scale: 0.95 }}
                 whileHover={{ scale: 1.05 }}
                 onClick={() => goTo("devis")}
-                className={`ml-2 rounded-full px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.18em] text-black ${styles.goldGrad}`}
+                className={`ml-2 rounded-full px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.18em] text-black cursor-pointer ${styles.goldGrad}`}
               >
                 Planifier un vol
               </motion.button>
             </nav>
           </motion.div>
 
-          <div className="mt-2 lg:hidden">
+          <div className="mt-2 lg:hidden flex gap-2">
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
-              className={`rounded-[24px] px-3 py-3 ${styles.glassCard}`}
+              className={`flex-1 rounded-[24px] px-3 py-3 ${styles.glassCard}`}
             >
               <button
                 onClick={() => {
@@ -1345,9 +2448,9 @@ export default function Home() {
                   setPanelOpen(true);
                   setMenuTab("Recherche");
                 }}
-                className="flex w-full items-center gap-3 text-left"
+                className="flex w-full items-center gap-3 text-left cursor-pointer"
               >
-                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/20 bg-[#ebd57e]/15 shadow-inner">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d9b84f]/20 bg-[#ebd57e]/15 shadow-inner">
                   <Search size={18} className="text-[#f4e08f]" />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -1368,9 +2471,6 @@ export default function Home() {
             transition={{ duration: 0.6, ease: "easeOut" }}
             className="max-w-3xl xl:max-w-4xl"
           >
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-4 py-2 text-[10px] uppercase tracking-[0.25em] text-[#d9b84f]">
-              <Star size={12} className="fill-[#d9b84f]" /> Aviation d'affaires premium
-            </div>
             <h2 className="max-w-4xl text-[34px] font-light leading-[0.98] tracking-tight sm:text-5xl md:text-[52px] lg:text-[64px] xl:text-[78px]">
               Le ciel aura une
               <br />
@@ -1387,7 +2487,7 @@ export default function Home() {
                 whileTap={{ scale: 0.97 }}
                 whileHover={{ scale: 1.02 }}
                 onClick={() => goTo("experiences")}
-                className={`rounded-full px-8 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-black transition-all ${styles.goldGrad}`}
+                className={`rounded-full px-8 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-black transition-all cursor-pointer ${styles.goldGrad}`}
               >
                 Explorer nos vols
               </motion.button>
@@ -1395,7 +2495,7 @@ export default function Home() {
                 whileTap={{ scale: 0.97 }}
                 whileHover={{ scale: 1.02 }}
                 onClick={() => goTo("about")}
-                className="rounded-full border border-white/15 bg-white/5 px-8 py-4 text-[11px] font-medium uppercase tracking-[0.18em] text-white/80 backdrop-blur-md transition hover:border-[#d9b84f]/40 hover:bg-white/10 hover:text-[#d9b84f]"
+                className="rounded-full border border-white/15 bg-white/5 px-8 py-4 text-[11px] font-medium uppercase tracking-[0.18em] text-white/80 backdrop-blur-md transition hover:border-[#d9b84f]/40 hover:bg-white/10 hover:text-[#d9b84f] cursor-pointer"
               >
                 Découvrir ESIJET
               </motion.button>
@@ -1409,12 +2509,12 @@ export default function Home() {
             className={`hidden w-full justify-self-end rounded-[32px] p-6 lg:block lg:p-10 ${styles.glassCard}`}
           >
             <div className="mb-8">
-              <h3 className="text-2xl font-light text-white">Demander une cotation</h3>
+              <h3 className="text-2xl font-light text-white">Demander un devis</h3>
               <p className="mt-2 text-sm text-[#d9b84f]/70">
                 Renseignez vos critères pour un vol sur-mesure.
               </p>
             </div>
-            <FlightSearchForm onValider={startBooking as any} maxPax={selectedFlightData.maxSeats} withTextarea />
+            <FlightSearchForm onValider={startBooking} maxPax={30} withTextarea />
           </motion.div>
         </section>
 
@@ -1425,7 +2525,7 @@ export default function Home() {
           >
             <div>
               <h3 className="text-lg font-light tracking-wide text-white sm:text-xl lg:text-2xl">
-                Flotte & Itinéraires
+                Transferts & Itinéraires
               </h3>
               <p className="mt-1.5 text-[10px] font-medium uppercase tracking-[0.24em] text-[#d9b84f]/80">
                 Aviation d’affaires · Départs privés · Service premium
@@ -1433,7 +2533,7 @@ export default function Home() {
             </div>
             <button
               onClick={() => goTo("devis")}
-              className={`self-start text-[11px] font-bold tracking-[0.2em] transition hover:opacity-80 sm:self-auto ${styles.goldText}`}
+              className={`self-start text-[11px] font-bold tracking-[0.2em] transition hover:opacity-80 sm:self-auto cursor-pointer ${styles.goldText}`}
             >
               PLANIFIER UN VOL
             </button>
@@ -1482,7 +2582,7 @@ export default function Home() {
                           toggleFav(f.id);
                         }}
                         className={cx(
-                          "absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/40 backdrop-blur-xl transition hover:scale-105",
+                          "absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/40 backdrop-blur-xl transition hover:scale-105 cursor-pointer",
                           liked
                             ? "border-[#d9b84f]/60 bg-black/70 text-[#f7e49d]"
                             : "hover:border-[#d9b84f]/50 hover:text-[#d9b84f]",
@@ -1518,7 +2618,7 @@ export default function Home() {
                       aria-label="Réserver"
                       whileTap={{ scale: 0.95 }}
                       onClick={() => handleFlightClick(f.id)}
-                      className="flex items-center gap-3 rounded-full border border-white/10 bg-white/5 py-1.5 pl-4 pr-1.5 transition-colors hover:bg-white/15 group-hover:border-[#d9b84f]/40"
+                      className="flex items-center gap-3 rounded-full border border-white/10 bg-white/5 py-1.5 pl-4 pr-1.5 transition-colors hover:bg-white/15 group-hover:border-[#d9b84f]/40 cursor-pointer"
                     >
                       <span className="text-[11px] font-bold uppercase tracking-widest text-white/90 group-hover:text-[#d9b84f]">
                         Réserver
@@ -1534,24 +2634,24 @@ export default function Home() {
           </div>
         </section>
 
-        <section ref={emptylegsRef} className="mt-20 hidden lg:block">
+        <section ref={emptylegsRef} className="mt-12 md:mt-20">
           <motion.div
             {...fadeUp}
             className="flex items-end justify-between border-b border-[#d9b84f]/20 pb-4"
           >
             <div>
-              <h3 className="text-2xl font-light tracking-wide text-white">Vols à vide</h3>
+              <h3 className="text-xl lg:text-2xl font-light tracking-wide text-white">Vols à vide</h3>
               <p className="mt-1.5 text-[10px] font-medium uppercase tracking-[0.24em] text-[#d9b84f]/80">
                 Tarifs privilégiés • Disponibilité immédiate
               </p>
             </div>
           </motion.div>
 
-          <div className="mt-8 grid grid-cols-3 gap-6 lg:gap-8">
+          <div className="mt-6 flex snap-x snap-mandatory gap-5 overflow-x-auto pb-6 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mt-8 lg:grid lg:grid-cols-3 lg:gap-8 lg:pb-0">
             {emptyLegs.map((leg) => (
               <div
                 key={leg.id}
-                className={`rounded-[24px] ${styles.glassCard} p-6 transition hover:border-[#d9b84f]/60 lg:p-8`}
+                className={`min-w-[280px] sm:min-w-[320px] lg:min-w-0 snap-center rounded-[24px] ${styles.glassCard} p-6 transition hover:border-[#d9b84f]/60 lg:p-8`}
               >
                 <div className="mb-4 flex items-center justify-between">
                   <span className="rounded-full bg-[#d9b84f]/20 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-[#d9b84f]">
@@ -1561,10 +2661,10 @@ export default function Home() {
                     {leg.jet} · {leg.pax} pax
                   </span>
                 </div>
-                <p className="mb-1 text-xl font-bold text-white">{leg.from}</p>
+                <p className="mb-1 text-xl font-bold text-white">{leg.cityFrom}</p>
                 <p className="text-xl font-bold text-white">
                   <ArrowRight size={16} className="mr-2 inline text-[#d9b84f]" />
-                  {leg.to}
+                  {leg.cityTo}
                 </p>
                 <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-4">
                   <span className="text-[11px] font-bold uppercase tracking-widest text-[#d9b84f]">
@@ -1572,7 +2672,7 @@ export default function Home() {
                   </span>
                   <button
                     onClick={() => startEmptyLegBooking(leg)}
-                    className="rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] transition hover:bg-[#d9b84f]/20"
+                    className="rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] transition hover:bg-[#d9b84f]/20 cursor-pointer"
                   >
                     Saisir l'opportunité
                   </button>
@@ -1580,6 +2680,34 @@ export default function Home() {
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="mt-4 flex gap-4 lg:hidden">
+          <a
+            href="tel:+33123456789"
+            onClick={() => vibrate(8)}
+            className="flex flex-1 flex-col justify-center rounded-[24px] border border-white/10 bg-[#050608]/50 p-5 backdrop-blur-md transition hover:border-[#d9b84f]/30"
+          >
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/20 bg-[#d9b84f]/10 text-[#d9b84f]">
+              <PhoneCall size={18} />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#d9b84f]">VIP 24H/7J</p>
+            <p className="mt-1 text-[13px] font-medium text-white/90">Ligne directe concierge</p>
+          </a>
+          <button
+            onClick={() => {
+              vibrate(8);
+              setJetCardOpen(true);
+              setPanelOpen(false);
+            }}
+            className="flex flex-1 flex-col justify-center rounded-[24px] border border-white/10 bg-[#050608]/50 p-5 text-left backdrop-blur-md transition hover:border-[#d9b84f]/30 cursor-pointer"
+          >
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/20 bg-[#d9b84f]/10 text-[#d9b84f]">
+              <Crown size={18} />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#d9b84f]">Jet Card ESIJET</p>
+            <p className="mt-1 text-[13px] font-medium text-white/90">Adhésion premium</p>
+          </button>
         </section>
 
         <section ref={privilegeRef} className="mt-24 hidden lg:block">
@@ -1605,7 +2733,7 @@ export default function Home() {
                     setJetCardOpen(true);
                     setPanelOpen(false);
                   }}
-                  className={`rounded-full px-8 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-black transition hover:scale-105 ${styles.goldGrad}`}
+                  className={`rounded-full px-8 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-black transition hover:scale-105 cursor-pointer ${styles.goldGrad}`}
                 >
                   Découvrir le programme
                 </button>
@@ -1647,73 +2775,6 @@ export default function Home() {
           </motion.div>
         </section>
 
-        <div className="mt-12 lg:hidden">
-          <div className="mb-6 flex items-center justify-between border-b border-[#d9b84f]/20 pb-4">
-            <h3 className="text-xl font-light tracking-wide text-white">Vols à vide</h3>
-          </div>
-          <div className="flex flex-col gap-4">
-            {emptyLegs.map((leg) => (
-              <div
-                key={leg.id}
-                className={`rounded-[24px] ${styles.glassCard} p-6 transition hover:border-[#d9b84f]/60`}
-              >
-                <div className="mb-4 flex items-center justify-between">
-                  <span className="rounded-full bg-[#d9b84f]/20 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-[#d9b84f]">
-                    {leg.date}
-                  </span>
-                  <span className="text-[11px] uppercase tracking-widest text-white/40">
-                    {leg.jet} · {leg.pax} pax
-                  </span>
-                </div>
-                <p className="mb-1 text-xl font-bold text-white">{leg.from}</p>
-                <p className="text-xl font-bold text-white">
-                  <ArrowRight size={16} className="mr-2 inline text-[#d9b84f]" />
-                  {leg.to}
-                </p>
-                <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-4">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-[#d9b84f]">
-                    Avantage {leg.price}
-                  </span>
-                  <button
-                    onClick={() => startEmptyLegBooking(leg)}
-                    className="rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] transition hover:bg-[#d9b84f]/20"
-                  >
-                    Saisir l'opportunité
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-12 grid grid-cols-2 gap-3">
-            <button
-              onClick={() => (window.location.href = "tel:+33651960631")}
-              className={`rounded-[22px] px-4 py-4 text-left ${styles.glassCard}`}
-            >
-              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/25 bg-[#d9b84f]/15">
-                <PhoneCall size={18} className="text-[#f4e08f]" />
-              </div>
-              <p className="text-[10px] uppercase tracking-[0.22em] text-[#d9b84f]">VIP 24h/7j</p>
-              <p className="mt-1 text-sm text-white/90">Ligne directe concierge</p>
-            </button>
-
-            <button
-              onClick={() => {
-                vibrate(8);
-                setJetCardOpen(true);
-                setPanelOpen(false);
-              }}
-              className={`rounded-[22px] px-4 py-4 text-left ${styles.glassCard}`}
-            >
-              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/25 bg-[#d9b84f]/15">
-                <Crown size={18} className="text-[#f4e08f]" />
-              </div>
-              <p className="text-[10px] uppercase tracking-[0.22em] text-[#d9b84f]">Jet Card ESIJET</p>
-              <p className="mt-1 text-sm text-white/90">Adhésion premium</p>
-            </button>
-          </div>
-        </div>
-
         <section className="mt-12 md:mt-24 lg:hidden">
           <motion.div {...fadeUp} className="hidden gap-6 md:grid md:grid-cols-3">
             {featureBlocks.map((f, i) => (
@@ -1736,7 +2797,7 @@ export default function Home() {
                 Décrivez votre besoin pour une proposition sur mesure.
               </p>
             </div>
-            <FlightSearchForm onValider={startBooking as any} maxPax={selectedFlightData.maxSeats} mobileStepMode />
+            <FlightSearchForm onValider={startBooking} maxPax={30} mobileStepMode />
           </motion.div>
         </section>
 
@@ -1819,14 +2880,14 @@ export default function Home() {
           </div>
         </footer>
 
-        <footer className="mt-14 flex justify-center border-t border-[#d9b84f]/20 pb-28 pt-8 md:hidden">
+        <footer className="mt-14 flex justify-center border-t border-[#d9b84f]/20 pb-32 pt-8 md:hidden">
           <p className="text-[11px] uppercase tracking-[0.2em] text-[#d9b84f]/50">© 2026 ESIJET.</p>
         </footer>
       </div>
 
       <div className="fixed bottom-10 right-10 z-40 hidden lg:block">
         <a
-          href="tel:+33651960631"
+          href="tel:+33123456789"
           aria-label="Appeler la ligne VIP"
           className="group flex h-16 items-center gap-4 rounded-full border border-[#d9b84f]/30 bg-[#000000]/90 pl-2.5 pr-7 shadow-[0_15px_50px_rgba(217,184,79,0.15)] backdrop-blur-2xl transition-all hover:scale-105 hover:border-[#d9b84f]"
         >
@@ -1839,838 +2900,10 @@ export default function Home() {
         </a>
       </div>
 
-      <Drawer open={emptyLegDrawerOpen} onOpenChange={setEmptyLegDrawerOpen}>
-        <DrawerContent aria-describedby={undefined} aria-labelledby={undefined} className="border-none bg-transparent p-0 shadow-none">
-          <DrawerHeader className="sr-only">
-            <DrawerTitle>Vol à vide</DrawerTitle>
-            <DrawerDescription>Réservation d'un vol à vide</DrawerDescription>
-          </DrawerHeader>
-
-          <div className="relative z-50 mx-auto mb-4 flex h-[85svh] w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:mb-auto md:h-[80dvh] md:max-w-[1000px] md:flex-row">
-            <div className="relative h-[35%] w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
-              <div className="pointer-events-none absolute inset-0 grayscale opacity-40 mix-blend-screen">
-                {emptyLegDrawerOpen && selectedEmptyLeg && (
-                  <MapBox origin={selectedEmptyLeg.origin} dest={selectedEmptyLeg.dest} />
-                )}
-              </div>
-
-              <button
-                onClick={() => setEmptyLegDrawerOpen(false)}
-                className="absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/30 bg-[#050608]/80 text-[#d9b84f] backdrop-blur-xl transition hover:bg-[#d9b84f]/10"
-              >
-                <X size={18} />
-              </button>
-
-              <div className="absolute bottom-5 left-5 z-20">
-                <span className="rounded-full bg-[#d9b84f] px-4 py-2 text-[11px] font-extrabold uppercase tracking-widest text-black shadow-[0_0_15px_rgba(217,184,79,0.5)]">
-                  Offre {selectedEmptyLeg?.price}
-                </span>
-              </div>
-            </div>
-
-            <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#0a0a0c] p-6 text-white md:order-1 md:p-10">
-              <h2 className="mb-1 text-3xl font-light text-white">Vol de positionnement</h2>
-              <p className="mb-10 text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                Opportunité de dernière minute.
-              </p>
-
-              {selectedEmptyLeg && (
-                <div className="space-y-8">
-                  <div className="rounded-[24px] border border-[#d9b84f]/20 bg-[#d9b84f]/5 p-6">
-                    <div className="mb-6 flex items-center gap-3">
-                      <PlaneTakeoff size={20} className="text-[#d9b84f]" />
-                      <span className="text-xl font-bold text-white">
-                        {selectedEmptyLeg.cityFrom}
-                        <ArrowRight size={16} className="mx-2 inline text-[#d9b84f]/50" />
-                        {selectedEmptyLeg.cityTo}
-                      </span>
-                    </div>
-
-                    <div className="space-y-4 text-sm text-white/80">
-                      <div className="flex justify-between border-b border-white/10 pb-3">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                          Départ
-                        </span>
-                        <span className="text-base font-medium text-[#d9b84f]">
-                          {selectedEmptyLeg.date}
-                        </span>
-                      </div>
-                      <div className="flex justify-between border-b border-white/10 pb-3">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                          Appareil
-                        </span>
-                        <span className="font-medium">{selectedEmptyLeg.jet}</span>
-                      </div>
-                      <div className="flex justify-between pb-1">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                          Capacité max
-                        </span>
-                        <span className="font-medium">{selectedEmptyLeg.pax} passagers</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      vibrate(8);
-                      startEmptyLegBooking(selectedEmptyLeg);
-                    }}
-                    className={`w-full rounded-2xl py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all ${styles.goldGrad}`}
-                  >
-                    Poursuivre la réservation
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </DrawerContent>
-      </Drawer>
-
-      <Drawer open={jetCardOpen} onOpenChange={setJetCardOpen}>
-        <DrawerContent aria-describedby={undefined} aria-labelledby={undefined} className="border-none bg-transparent p-0 shadow-none">
-          <DrawerHeader className="sr-only">
-            <DrawerTitle>Abonnement Jet Card</DrawerTitle>
-            <DrawerDescription>Formulaire d'abonnement</DrawerDescription>
-          </DrawerHeader>
-
-          <div className="relative z-50 mx-auto mb-4 flex h-[85svh] w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:mb-auto md:h-[80dvh] md:max-w-[800px] md:flex-row">
-            <div className="relative h-[30%] w-full shrink-0 bg-black md:order-2 md:h-full md:w-[45%]">
-              <Image src="/jet.jpg" alt="Jet Card ESIJET" fill className="object-cover opacity-40 grayscale mix-blend-screen" />
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-[#000000] to-transparent p-6 text-center">
-                 <Crown size={56} className="mb-4 text-[#d9b84f] drop-shadow-[0_0_15px_rgba(217,184,79,0.5)]" />
-                 <h3 className="mb-2 text-3xl font-light text-white">Jet Card</h3>
-                 <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                   L'ultime liberté de voler.
-                 </p>
-              </div>
-              <button
-                onClick={() => setJetCardOpen(false)}
-                aria-label="Fermer"
-                className="absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-xl transition hover:bg-white/20"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#0a0a0c] p-6 text-white md:order-1 md:p-10">
-               <h2 className="mb-1 text-2xl font-light">Adhésion Jet Card</h2>
-               <p className="mb-10 text-xs text-white/50">Configurez votre abonnement d'heures de vol.</p>
-
-               <div className="space-y-8">
-                  <div>
-                     <label className="mb-4 block text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">
-                       Volume d'heures
-                     </label>
-                     <div className="grid grid-cols-3 gap-3">
-                        {[25, 50, 100].map((h) => (
-                           <button
-                             key={h}
-                             onClick={() => { vibrate(8); setJcForm({ ...jcForm, hours: h }); }}
-                             className={cx(
-                               "rounded-2xl border py-4 text-sm font-bold transition-all",
-                               jcForm.hours === h
-                                 ? "border-[#d9b84f] bg-[#d9b84f]/10 text-[#d9b84f] shadow-[0_4px_15px_rgba(217,184,79,0.2)]"
-                                 : "border-white/10 bg-white/[0.02] text-white/50 hover:border-[#d9b84f]/50"
-                             )}
-                           >
-                             {h}h
-                           </button>
-                        ))}
-                     </div>
-                  </div>
-
-                  <div>
-                     <label className="mb-4 block text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">
-                       Vos coordonnées
-                     </label>
-                     <div className="space-y-4">
-                       <div className={styles.inputWrapper}>
-                         <User className="mr-3 shrink-0 text-[#d9b84f]/50" size={18} />
-                         <input
-                           placeholder="Nom complet"
-                           value={jcForm.name}
-                           onChange={(e) => setJcForm({ ...jcForm, name: e.target.value })}
-                           className={styles.inputField}
-                         />
-                       </div>
-                       <div className={styles.inputWrapper}>
-                         <PhoneCall className="mr-3 shrink-0 text-[#d9b84f]/50" size={18} />
-                         <div className="flex-1">
-                           <PhoneInput
-                             international
-                             defaultCountry="FR"
-                             countryCallingCodeEditable={false}
-                             placeholder="Téléphone avec indicatif"
-                             value={jcForm.phone}
-                             onChange={(value) => setJcForm({ ...jcForm, phone: value || "" })}
-                             className="phone-input-esijet"
-                           />
-                         </div>
-                       </div>
-                       {jcForm.phone && !isValidInternationalPhone(jcForm.phone) && (
-                         <p className="text-xs text-red-400">Entrez un numéro valide avec indicatif international.</p>
-                       )}
-                       <div className={styles.inputWrapper}>
-                         <MessageSquare className="mr-3 shrink-0 text-[#d9b84f]/50" size={18} />
-                         <input
-                           placeholder="Email"
-                           type="email"
-                           value={jcForm.email}
-                           onChange={(e) => setJcForm({ ...jcForm, email: e.target.value })}
-                           className={styles.inputField}
-                         />
-                       </div>
-                       {jcForm.email && !isValidEmail(jcForm.email) && (
-                         <p className="text-xs text-red-400">Entrez une adresse email valide.</p>
-                       )}
-                     </div>
-                  </div>
-
-                  <button
-                    disabled={!jcForm.name.trim() || !isValidInternationalPhone(jcForm.phone) || !isValidEmail(jcForm.email)}
-                    onClick={submitJetCardRequest}
-                    className={cx(
-                      "mt-4 w-full rounded-2xl py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all",
-                      !jcForm.name.trim() || !isValidInternationalPhone(jcForm.phone) || !isValidEmail(jcForm.email)
-                        ? "cursor-not-allowed bg-white/10 text-white/30"
-                        : styles.goldGrad
-                    )}
-                  >
-                    Demander mon adhésion
-                  </button>
-               </div>
-            </div>
-          </div>
-        </DrawerContent>
-      </Drawer>
-
-      <Drawer
-        open={uberDrawerOpen}
-        onOpenChange={(open) => {
-          setUberDrawerOpen(open);
-          if (!open) {
-            setDetailedVehicle(null);
-            setPhotoIndex(0);
-          }
-        }}
-      >
-        <DrawerContent aria-describedby={undefined} aria-labelledby={undefined} className="border-none bg-transparent p-0 shadow-none">
-          <DrawerHeader className="sr-only">
-            <DrawerTitle>Sélection</DrawerTitle>
-            <DrawerDescription>Choix du jet</DrawerDescription>
-          </DrawerHeader>
-
-          <div className="relative z-50 mx-auto mb-4 flex h-[82svh] w-[calc(100vw-32px)] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:mb-auto md:h-[78dvh] md:max-w-[1150px] md:flex-row">
-            <div className="relative h-[28%] w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
-              <div className="pointer-events-none absolute inset-0 grayscale opacity-40 mix-blend-screen">
-                {uberDrawerOpen && bd.dep && bd.arr ? (
-                  <MapBox origin={bd.dep.coords} dest={bd.arr.coords} />
-                ) : uberDrawerOpen ? (
-                  <MapBox origin={selectedFlightData.origin} dest={selectedFlightData.dest} />
-                ) : null}
-              </div>
-
-              <button
-                onClick={() => {
-                  vibrate(8);
-                  setUberDrawerOpen(false);
-                }}
-                aria-label="Fermer"
-                className="absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/30 bg-[#050608]/80 text-[#d9b84f] backdrop-blur-xl transition hover:bg-[#d9b84f]/10"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col bg-[#050608] text-white md:order-1">
-              <div className="flex min-h-[80px] shrink-0 items-center justify-between px-5 pt-5 md:px-6 md:pt-10">
-                {detailedVehicle ? (
-                  <button
-                    onClick={() => {
-                      vibrate(8);
-                      setDetailedVehicle(null);
-                      setPhotoIndex(0);
-                    }}
-                    className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white/70 transition hover:border-[#d9b84f]/50 hover:text-[#d9b84f]"
-                  >
-                    <ArrowLeft size={16} /> Retour aux jets
-                  </button>
-                ) : (
-                  <div className="flex gap-2 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {flights.map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => {
-                          vibrate(8);
-                          setSelectedFlight(f.id);
-                          setSelectedVehicle(f.vehicles[0].id);
-                          setBd((prev) => ({ ...prev, jet: f.vehicles[0] }));
-                          setDetailedVehicle(null);
-                          setPhotoIndex(0);
-                        }}
-                        className={cx(
-                          "whitespace-nowrap rounded-full px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest transition",
-                          selectedFlight === f.id
-                            ? "bg-[#d9b84f] text-black shadow-lg"
-                            : "border border-white/15 text-white/60 hover:border-[#d9b84f]/30 hover:bg-white/5",
-                        )}
-                      >
-                        {f.from} → {f.to}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {drawerStep === 2 && detailedVehicle && (
-                  <span className="ml-auto text-[11px] font-bold uppercase tracking-widest text-[#d9b84f]">
-                    Étape 2 / 5
-                  </span>
-                )}
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-5 pb-4 md:px-6 [-ms-overflow-style:none] [mask-image:linear-gradient(to_bottom,black_85%,transparent_100%)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <AnimatePresence mode="wait">
-                  {drawerStep === 1 && (
-                    <motion.div
-                      key="s1"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 10 }}
-                      className="mt-4 space-y-5 pb-10"
-                    >
-                      <div>
-                        <h2 className="mb-1 text-2xl font-light text-white">Votre itinéraire</h2>
-                        <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                          Où souhaitez-vous aller ?
-                        </p>
-                      </div>
-
-                      <div className="mb-4 flex flex-wrap gap-2">
-                        {(["simple", "retour"] as const).map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => {
-                              vibrate(8);
-                              setBd({ ...bd, tripType: t });
-                            }}
-                            className={cx(
-                              "rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-widest transition-all",
-                              bd.tripType === t
-                                ? "bg-[#d9b84f] text-black shadow-md"
-                                : "border border-[#d9b84f]/30 bg-transparent text-[#d9b84f]/60 hover:bg-[#d9b84f]/10",
-                            )}
-                          >
-                            {t === "simple" ? "Aller simple" : "Aller-retour"}
-                          </button>
-                        ))}
-                      </div>
-
-                      <CustomSelect
-                        type="airport"
-                        val={bd.dep}
-                        setVal={(v: Airport) => setBd({ ...bd, dep: v })}
-                        Icon={PlaneTakeoff}
-                        ph="Aéroport de départ"
-                      />
-                      <CustomSelect
-                        type="airport"
-                        val={bd.arr}
-                        setVal={(v: Airport) => setBd({ ...bd, arr: v })}
-                        Icon={PlaneLanding}
-                        ph="Aéroport d'arrivée"
-                      />
-
-                      <div className={cx("grid gap-4", bd.tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
-                        <div className={styles.inputWrapper}>
-                          <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
-                          <input
-                            type="date"
-                            value={bd.date}
-                            onChange={(e) => setBd({ ...bd, date: e.target.value })}
-                            className={styles.inputField}
-                          />
-                        </div>
-
-                        {bd.tripType === "retour" && (
-                          <div className={styles.inputWrapper}>
-                            <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
-                            <input
-                              type="date"
-                              value={bd.returnDate || ""}
-                              onChange={(e) => setBd({ ...bd, returnDate: e.target.value })}
-                              className={styles.inputField}
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      <CustomSelect
-                        type="pax"
-                        pax={bd.pax}
-                        setPax={(p: number) => setBd({ ...bd, pax: p })}
-                        maxPax={8}
-                        Icon={Users}
-                        ph="Passagers"
-                      />
-                    </motion.div>
-                  )}
-
-                  {drawerStep === 2 && detailedVehicle && detailedVehicleData ? (
-                    <motion.div
-                      key="details"
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      className="mt-2 space-y-6 pb-12"
-                    >
-                      <div className="relative h-56 w-full overflow-hidden rounded-[24px] border border-[#d9b84f]/20">
-                        <AnimatePresence mode="wait">
-                          <motion.div
-                            key={photoIndex}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            transition={{ duration: 0.25 }}
-                            className="absolute inset-0 cursor-grab active:cursor-grabbing"
-                            drag="x"
-                            dragConstraints={{ left: 0, right: 0 }}
-                            dragElastic={0.2}
-                            onDragEnd={(_, { offset }) => {
-                              if (offset.x <= -40) nextPhoto();
-                              if (offset.x >= 40) prevPhoto();
-                            }}
-                          >
-                            <Image
-                              src={detailedVehicleData.images[photoIndex]}
-                              alt={detailedVehicleData.name}
-                              fill
-                              sizes="(max-width: 768px) 100vw, 50vw"
-                              quality={100}
-                              className="pointer-events-none object-cover opacity-90"
-                            />
-                          </motion.div>
-                        </AnimatePresence>
-
-                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-
-                        <button
-                          onClick={prevPhoto}
-                          aria-label="Photo précédente"
-                          className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-[#d9b84f]/30 bg-[#050608]/60 p-2 text-[#d9b84f] backdrop-blur-md"
-                        >
-                          <ChevronLeft size={20} />
-                        </button>
-                        <button
-                          onClick={nextPhoto}
-                          aria-label="Photo suivante"
-                          className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-[#d9b84f]/30 bg-[#050608]/60 p-2 text-[#d9b84f] backdrop-blur-md"
-                        >
-                          <ChevronRight size={20} />
-                        </button>
-
-                        <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-2">
-                          {detailedVehicleData.images.map((_, i) => (
-                            <div
-                              key={i}
-                              className={cx(
-                                "h-1.5 rounded-full transition-all duration-300",
-                                photoIndex === i ? "w-8 bg-[#d9b84f]" : "w-1.5 bg-white/40",
-                              )}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="mb-2 flex items-center justify-between">
-                          <h2 className="text-2xl font-bold text-white">{detailedVehicleData.name}</h2>
-                          {detailedVehicleData.pop && (
-                            <span className="rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-3 py-1 text-[9px] font-extrabold uppercase tracking-widest text-[#d9b84f] shadow-[0_0_10px_rgba(217,184,79,0.2)]">
-                              Recommandé
-                            </span>
-                          )}
-                        </div>
-                        <p className="mb-4 text-[12px] font-bold uppercase tracking-[0.2em] text-[#d9b84f]/80">
-                          {detailedVehicleData.subtitle}
-                        </p>
-                        <p className="text-[15px] leading-relaxed text-white/70">
-                          {detailedVehicleData.desc}
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-3 border-t border-[#d9b84f]/15 pt-6">
-                        <div className="rounded-[20px] border border-white/5 bg-white/[0.03] p-3 text-center shadow-sm">
-                          <Users className="mx-auto mb-2 text-[#d9b84f]" size={18} />
-                          <p className="text-sm font-bold text-white">{detailedVehicleData.seats} pax</p>
-                        </div>
-                        <div className="rounded-[20px] border border-white/5 bg-white/[0.03] p-3 text-center shadow-sm">
-                          <Wind className="mx-auto mb-2 text-[#d9b84f]" size={18} />
-                          <p className="text-sm font-bold text-white">{detailedVehicleData.speed}</p>
-                        </div>
-                        <div className="rounded-[20px] border border-white/5 bg-white/[0.03] p-3 text-center shadow-sm">
-                          <Luggage className="mx-auto mb-2 text-[#d9b84f]" size={18} />
-                          <p className="text-sm font-bold text-white">{detailedVehicleData.bag}</p>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ) : drawerStep === 2 ? (
-                    <motion.div
-                      key="list"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="mt-2 space-y-4 pb-12"
-                    >
-                      <div className="mb-4">
-                        <h2 className="mb-1 text-xl font-light text-white">Choix de l'appareil</h2>
-                        <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                          Sélectionnez le jet adapté à vos besoins.
-                        </p>
-                      </div>
-
-                      {selectedFlightData.vehicles.map((v) => {
-                        const isSelected = bd.jet?.id === v.id;
-                        return (
-                          <div
-                            key={v.id}
-                            onClick={() => {
-                              vibrate(8);
-                              setSelectedVehicle(v.id);
-                              setBd({ ...bd, jet: v });
-                            }}
-                            className={cx(
-                              "cursor-pointer rounded-[28px] border p-5 transition-all",
-                              isSelected
-                                ? "scale-[1.02] border-[#d9b84f] bg-[#d9b84f]/10 text-white shadow-[0_10px_30px_rgba(217,184,79,0.15)]"
-                                : "border-white/10 bg-transparent text-white hover:border-[#d9b84f]/40",
-                            )}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="flex items-center gap-3">
-                                  <h3 className="text-lg font-bold">{v.name}</h3>
-                                  <span className="rounded-sm bg-[#d9b84f] px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-black">
-                                    {v.price}
-                                  </span>
-                                </div>
-                                <p
-                                  className={cx(
-                                    "mt-1 text-xs font-medium uppercase tracking-widest",
-                                    isSelected ? "text-[#d9b84f]" : "text-white/50",
-                                  )}
-                                >
-                                  {v.subtitle}
-                                </p>
-                                <div
-                                  className={cx(
-                                    "mt-3 flex items-center gap-3 text-[11px]",
-                                    isSelected ? "text-white/90" : "text-white/50",
-                                  )}
-                                >
-                                  <span>{v.seats} pax</span>
-                                  <span>•</span>
-                                  <span>{v.time}</span>
-                                  {v.pop && (
-                                    <>
-                                      <span>•</span>
-                                      <span className={isSelected ? "text-[#d9b84f]" : "text-[#d9b84f]/70"}>
-                                        Recommandé
-                                      </span>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-
-                              <button
-                                aria-label="Voir les détails"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  vibrate(8);
-                                  setSelectedVehicle(v.id);
-                                  setDetailedVehicle(v.id);
-                                  setPhotoIndex(0);
-                                  setBd({ ...bd, jet: v });
-                                }}
-                                className={cx(
-                                  "rounded-full p-3 transition",
-                                  isSelected
-                                    ? "bg-[#d9b84f] text-black"
-                                    : "bg-white/5 text-white hover:bg-white/10 hover:text-[#d9b84f]",
-                                )}
-                              >
-                                <Info size={20} />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </motion.div>
-                  ) : null}
-
-                  {drawerStep === 3 && (
-                    <motion.div
-                      key="s3"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 10 }}
-                      className="mt-4 space-y-4 pb-10"
-                    >
-                      <div className="mb-6">
-                        <h2 className="mb-1 text-2xl font-light text-white">Options de vol</h2>
-                        <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                          Sélectionnez vos besoins spécifiques à bord.
-                        </p>
-                      </div>
-
-                      {flightOptions.map((s) => {
-                        const isActive = bd.services?.[s.id];
-                        return (
-                          <div
-                            key={s.id}
-                            onClick={() => {
-                              vibrate(8);
-                              setBd({
-                                ...bd,
-                                services: { ...(bd.services || {}), [s.id]: !isActive },
-                              });
-                            }}
-                            className={cx(
-                              "flex cursor-pointer items-center gap-5 rounded-[24px] border p-5 transition-all",
-                              isActive
-                                ? "border-[#d9b84f] bg-[#d9b84f]/10 shadow-[0_10px_20px_rgba(217,184,79,0.15)]"
-                                : "border-white/10 bg-white/[0.02] hover:border-[#d9b84f]/40",
-                            )}
-                          >
-                            <div
-                              className={cx(
-                                "flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition-colors",
-                                isActive ? "bg-[#d9b84f] text-black" : "bg-white/5 text-white/40",
-                              )}
-                            >
-                              <s.icon size={20} />
-                            </div>
-                            <div>
-                              <h3 className="text-sm font-bold text-white">{s.name}</h3>
-                              <p className="mt-1 text-[11px] text-white/50">{s.desc}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      <div className={cx(styles.inputWrapper, "items-start")}>
-                        <MessageSquare className="mr-3 mt-0.5 shrink-0 text-[#d9b84f]/60" size={18} />
-                        <textarea
-                          value={bd.note || ""}
-                          onChange={(e) => setBd({ ...bd, note: e.target.value })}
-                          placeholder="Notes (ex: 3 sacs de golf)"
-                          className={cx(styles.inputField, "h-20 resize-none")}
-                        />
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {drawerStep === 4 && (
-                    <motion.div
-                      key="s4"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 10 }}
-                      className="mt-4 space-y-4 pb-10"
-                    >
-                      <div className="mb-6">
-                        <h2 className="mb-1 text-2xl font-light text-white">Vos coordonnées</h2>
-                        <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                          Pour que votre conseiller puisse vous contacter.
-                        </p>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className={styles.inputWrapper}>
-                          <User className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
-                          <input
-                            placeholder="Nom complet"
-                            value={bd.contact?.name ?? ""}
-                            onChange={(e) =>
-                              setBd({
-                                ...bd,
-                                contact: {
-                                  ...(bd.contact || { name: "", phone: "", email: "" }),
-                                  name: e.target.value,
-                                },
-                              })
-                            }
-                            className={styles.inputField}
-                          />
-                        </div>
-                        <div className={styles.inputWrapper}>
-                          <PhoneCall className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
-                          <div className="flex-1">
-                            <PhoneInput
-                              international
-                              defaultCountry="FR"
-                              countryCallingCodeEditable={false}
-                              placeholder="Téléphone avec indicatif"
-                              value={bd.contact?.phone || ""}
-                              onChange={(value) =>
-                                setBd({
-                                  ...bd,
-                                  contact: {
-                                    ...(bd.contact || { name: "", phone: "", email: "" }),
-                                    phone: value || "",
-                                  },
-                                })
-                              }
-                              className="phone-input-esijet"
-                            />
-                          </div>
-                        </div>
-                        {bd.contact?.phone && !isValidInternationalPhone(bd.contact.phone) && (
-                          <p className="text-xs text-red-400">Entrez un numéro valide avec indicatif international.</p>
-                        )}
-                        <div className={styles.inputWrapper}>
-                          <MessageSquare className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
-                          <input
-                            placeholder="Adresse email"
-                            type="email"
-                            value={bd.contact?.email ?? ""}
-                            onChange={(e) =>
-                              setBd({
-                                ...bd,
-                                contact: {
-                                  ...(bd.contact || { name: "", phone: "", email: "" }),
-                                  email: e.target.value,
-                                },
-                              })
-                            }
-                            className={styles.inputField}
-                          />
-                        </div>
-                        {bd.contact?.email && !isValidEmail(bd.contact.email) && (
-                          <p className="text-xs text-red-400">Entrez une adresse email valide.</p>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {drawerStep === 5 && (
-                    <motion.div
-                      key="s5"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 10 }}
-                      className="mt-4 space-y-6 pb-10"
-                    >
-                      <div className="mb-2">
-                        <h2 className="mb-1 text-2xl font-light text-white">Récapitulatif</h2>
-                        <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                          Vérifiez les détails avant l'envoi de la demande.
-                        </p>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#d9b84f]/20 bg-[#d9b84f]/5 p-6 shadow-sm">
-                        <div className="mb-6 flex items-center gap-3">
-                          <PlaneTakeoff size={18} className="text-[#d9b84f]" />
-                          <span className="text-lg font-bold text-white">
-                            {bd.dep?.city}
-                            <ArrowRight size={14} className="mx-2 inline text-[#d9b84f]/50" />
-                            {bd.arr?.city}
-                          </span>
-                        </div>
-
-                        <div className="space-y-4 text-sm text-white/90">
-                          <div className="flex justify-between border-b border-white/10 pb-4">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                              Trajet
-                            </span>
-                            <span className="font-medium text-right">
-                              {bd.tripType === "retour" ? "Aller-retour" : "Aller simple"}
-                            </span>
-                          </div>
-                          <div className="flex justify-between border-b border-white/10 pb-4">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                              Dates
-                            </span>
-                            <span className="font-medium text-right text-[#d9b84f]">
-                              {bd.date || "Date flexible"}{" "}
-                              {bd.tripType === "retour" && bd.returnDate ? ` - ${bd.returnDate}` : ""}
-                            </span>
-                          </div>
-                          <div className="flex justify-between border-b border-white/10 pb-4">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                              Passagers
-                            </span>
-                            <span className="font-medium text-right">{bd.pax} pers.</span>
-                          </div>
-                          <div className="flex justify-between border-b border-white/10 pb-4">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                              Appareil
-                            </span>
-                            <span className="font-medium text-right">{bd.jet?.name}</span>
-                          </div>
-                          {Object.entries(bd.services || {}).filter(([_, v]) => v).length > 0 && (
-                            <div className="flex justify-between border-b border-white/10 pb-4">
-                              <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                                Options
-                              </span>
-                              <span className="font-medium text-right">
-                                {Object.keys(bd.services || {})
-                                  .filter((k) => bd.services?.[k])
-                                  .map((k) => flightOptions.find((o) => o.id === k)?.name)
-                                  .join(", ")}
-                              </span>
-                            </div>
-                          )}
-                          <div className="flex justify-between border-b border-white/10 pb-4">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                              Contact
-                            </span>
-                            <span className="font-medium text-right">
-                              {bd.contact?.name}
-                              <br />
-                              <span className="text-xs text-white/50">{bd.contact?.phone}</span>
-                            </span>
-                          </div>
-                          <div className="flex justify-between pt-2">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">
-                              Estimation
-                            </span>
-                            <span className="text-lg font-bold text-[#d9b84f]">{bd.jet?.price}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              <div className="mb-2 flex shrink-0 gap-4 border-t border-[#d9b84f]/20 bg-[#050608] p-4 md:p-6">
-                {drawerStep > 1 && (
-                  <button
-                    onClick={() => setDrawerStep((s) => s - 1)}
-                    className="flex-1 rounded-2xl border border-white/10 py-4.5 text-xs font-bold uppercase tracking-widest transition-all hover:bg-white/5"
-                  >
-                    Retour
-                  </button>
-                )}
-                <button
-                  disabled={isNextDisabled}
-                  onClick={handleNextStep}
-                  className={cx(
-                    "flex-[2] rounded-[20px] py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all",
-                    isNextDisabled ? "cursor-not-allowed bg-white/10 text-white/30" : styles.goldGrad,
-                  )}
-                >
-                  {detailedVehicle
-                    ? "Choisir cet appareil"
-                    : drawerStep === 5
-                      ? "Envoyer la demande"
-                      : "Étape suivante"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </DrawerContent>
-      </Drawer>
+      {/* MODALS RENDERING (DESKTOP AND MOBILE) */}
+      {renderModal(emptyLegDrawerOpen, setEmptyLegDrawerOpen, "Vol à vide", "Réservation", emptyLegContent)}
+      {renderModal(jetCardOpen, setJetCardOpen, "Jet Card", "Abonnement", jetCardContent)}
+      {renderModal(uberDrawerOpen, handleUberDrawerChange, "Sélection", "Choix du jet", bookingContent)}
 
       <AnimatePresence>
         {panelOpen && (
@@ -2703,7 +2936,7 @@ export default function Home() {
                       setMenuTab(tab);
                     }}
                     className={cx(
-                      "whitespace-nowrap border-b-2 pb-2 text-[14px] font-medium transition-all",
+                      "cursor-pointer whitespace-nowrap border-b-2 pb-2 text-[14px] font-medium transition-all",
                       menuTab === tab
                         ? "border-[#d9b84f] text-[#d9b84f]"
                         : "border-transparent text-white/40 hover:text-white/70",
@@ -2716,7 +2949,9 @@ export default function Home() {
 
               <div className="flex-1 overflow-y-auto pb-20 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {menuTab === "Recherche" && (
-                  <FlightSearchForm onValider={startBooking as any} maxPax={8} mobileStepMode />
+                  <div className="mt-2 rounded-[28px] border border-[#d9b84f]/20 bg-white/[0.03] p-5">
+                    <FlightSearchForm onValider={startBooking} maxPax={30} mobileStepMode />
+                  </div>
                 )}
 
                 {menuTab === "Menu" && (
@@ -2725,7 +2960,7 @@ export default function Home() {
                       {[
                         {
                           Icon: Compass,
-                          t: "Vols",
+                          t: "Transferts",
                           a: () => {
                             setPanelOpen(false);
                             goTo("experiences");
@@ -2759,8 +2994,8 @@ export default function Home() {
                           }}
                           className={
                             b.bg
-                              ? `rounded-[24px] p-5 text-left text-black ${b.bg} shadow-lg shadow-[#d9b84f]/10`
-                              : `rounded-[24px] border border-white/10 ${styles.glassCard} p-5 text-left transition hover:border-[#d9b84f]/30`
+                              ? `cursor-pointer rounded-[24px] p-5 text-left text-black ${b.bg} shadow-lg shadow-[#d9b84f]/10`
+                              : `cursor-pointer rounded-[24px] border border-white/10 ${styles.glassCard} p-5 text-left transition hover:border-[#d9b84f]/30`
                           }
                         >
                           <b.Icon size={20} className={`mb-4 ${b.bg ? "" : "text-[#e5c96d]"}`} />
@@ -2770,44 +3005,72 @@ export default function Home() {
                         </button>
                       ))}
                     </div>
-                    <div className="mt-6 border-t border-[#d9b84f]/15 pt-6">
-                      <p className="mb-4 text-[10px] font-bold uppercase tracking-[0.2em] text-[#d9b84f]">
+                    <div className="mt-6 border-t border-[#d9b84f]/15 pt-6 flex items-center justify-between">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#d9b84f]">
                         Espace VIP
                       </p>
-                      <div className="flex flex-col gap-3">
-                        <button
-                          onClick={() => vibrate(8)}
-                          className="flex items-center gap-4 rounded-[20px] border border-white/5 bg-white/[0.02] p-4 transition hover:border-[#d9b84f]/30"
-                        >
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
-                            <PhoneCall size={18} />
-                          </div>
-                          <div className="text-left">
-                            <p className="text-sm font-bold text-white">Assistance 24/7</p>
-                            <p className="text-xs text-white/40">Contact direct & WhatsApp</p>
-                          </div>
-                        </button>
+                      
+                      <button
+                        onClick={() => setLang(lang === "fr" ? "en" : "fr")}
+                        className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/50 hover:text-[#d9b84f] transition cursor-pointer"
+                      >
+                        <Globe size={14} />
+                        {lang === "fr" ? "EN" : "FR"}
+                      </button>
+                    </div>
+                    <div className="mt-4 flex flex-col gap-3">
+                      <button
+                        onClick={() => setIsLoggedIn(!isLoggedIn)}
+                        className={cx(
+                          "cursor-pointer flex items-center gap-4 rounded-[20px] border p-4 transition",
+                          isLoggedIn 
+                            ? "border-[#d9b84f]/50 bg-[#d9b84f]/10" 
+                            : "border-white/5 bg-white/[0.02] hover:border-[#d9b84f]/30"
+                        )}
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
+                          {isLoggedIn ? <User size={18} /> : <LogOut size={18} className="rotate-180" />}
+                        </div>
+                        <div className="text-left">
+                          <p className={cx("text-sm font-bold", isLoggedIn ? "text-[#d9b84f]" : "text-white")}>
+                            {isLoggedIn ? "Mon Espace" : "Connexion VIP"}
+                          </p>
+                          <p className="text-xs text-white/40">Gérer mon compte & mes factures</p>
+                        </div>
+                      </button>
 
-                        <button
-                          onClick={() => vibrate(8)}
-                          className="flex items-center gap-4 rounded-[20px] border border-white/5 bg-white/[0.02] p-4 transition hover:border-[#d9b84f]/30"
-                        >
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
-                            <Heart size={18} />
-                          </div>
-                          <div className="text-left">
-                            <p className="text-sm font-bold text-white">Mes Favoris</p>
-                            <p className="text-xs text-white/40">
-                              {favorites.length} vols et jets enregistrés
-                            </p>
-                          </div>
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => vibrate(8)}
+                        className="cursor-pointer flex items-center gap-4 rounded-[20px] border border-white/5 bg-white/[0.02] p-4 transition hover:border-[#d9b84f]/30"
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
+                          <PhoneCall size={18} />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-sm font-bold text-white">Assistance 24/7</p>
+                          <p className="text-xs text-white/40">Contact direct & WhatsApp</p>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => vibrate(8)}
+                        className="cursor-pointer flex items-center gap-4 rounded-[20px] border border-white/5 bg-white/[0.02] p-4 transition hover:border-[#d9b84f]/30"
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
+                          <Heart size={18} />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-sm font-bold text-white">Mes Favoris</p>
+                          <p className="text-xs text-white/40">
+                            {favorites.length} vols et jets enregistrés
+                          </p>
+                        </div>
+                      </button>
                     </div>
                   </>
                 )}
 
-                {menuTab === "Flotte" && (
+                {menuTab === "Transferts" && (
                   <div className="mt-2 flex flex-col gap-4">
                     {flights[0].vehicles.map((v) => (
                       <div
@@ -2819,25 +3082,33 @@ export default function Home() {
                           setSelectedVehicle(v.id);
                           setDetailedVehicle(v.id);
                           setPhotoIndex(0);
-                          startBooking({} as any);
+                          startBooking({
+                            dep: getPredefinedAirport(flights[0].from),
+                            arr: getPredefinedAirport(flights[0].to),
+                            pax: 1,
+                            date: "",
+                            tripType: "simple",
+                            contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
+                            isLocked: true,
+                            isCustomRoute: false,
+                          }, flights[0].id);
                         }}
-                        className="group relative flex h-32 cursor-pointer overflow-hidden rounded-[24px] border border-white/10 bg-[#050608] transition hover:border-[#d9b84f]/40"
+                        className="group relative flex h-40 w-full cursor-pointer flex-col justify-end overflow-hidden rounded-[24px] border border-white/10 transition hover:border-[#d9b84f]/40"
                       >
-                        <div className="relative w-2/5 shrink-0">
-                          <Image
-                            src={v.images[0]}
-                            alt={v.name}
-                            fill
-                            className="object-cover opacity-80 transition-transform group-hover:scale-105"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-black/40 to-[#050608]" />
-                        </div>
-                        <div className="flex flex-1 flex-col justify-center p-4">
-                          <h4 className="text-sm font-bold text-white">{v.name}</h4>
-                          <p className="mt-0.5 text-[9px] uppercase tracking-[0.2em] text-[#d9b84f]">
+                        <Image
+                          src={v.images[0]}
+                          alt={v.name}
+                          fill
+                          className="object-cover opacity-50 transition-transform group-hover:scale-105"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                        
+                        <div className="relative z-10 p-5">
+                          <h4 className="text-lg font-bold text-white">{v.name}</h4>
+                          <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-[#d9b84f]">
                             {v.price}
                           </p>
-                          <div className="mt-2 flex gap-3 text-[11px] text-white/50">
+                          <div className="mt-2 flex gap-3 text-[11px] font-medium text-white/70">
                             <span>{v.seats} pax</span>
                             <span>•</span>
                             <span>{v.speed}</span>
@@ -2877,7 +3148,7 @@ export default function Home() {
                               vibrate(8);
                               startEmptyLegBooking(leg);
                             }}
-                            className="rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] transition hover:bg-[#d9b84f]/20"
+                            className="cursor-pointer rounded-full border border-[#d9b84f]/30 bg-[#d9b84f]/10 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] transition hover:bg-[#d9b84f]/20"
                           >
                             Réserver
                           </button>
@@ -2888,24 +3159,55 @@ export default function Home() {
                 )}
 
                 {menuTab === "Privilège" && (
-                  <div className="mt-2">
+                  <div className="mt-2 space-y-4">
                     <div
-                      className={`relative mb-4 overflow-hidden rounded-[24px] border border-[#d9b84f]/30 ${styles.glassCard} bg-[radial-gradient(ellipse_at_top_right,rgba(217,184,79,0.15),transparent_50%)] p-6 text-center`}
+                      className={`relative overflow-hidden rounded-[32px] border border-[#d9b84f]/30 ${styles.glassCard} bg-[radial-gradient(ellipse_at_top_right,rgba(217,184,79,0.15),transparent_50%)] p-6 text-center flex flex-col justify-center`}
                     >
-                      <Crown size={28} className="relative z-10 mx-auto mb-3 text-[#d9b84f]" />
-                      <h3 className="relative z-10 mb-2 text-xl font-light text-white">Jet Card ESIJET</h3>
-                      <p className="relative z-10 text-xs leading-relaxed text-white/60">
-                        Bloquez vos heures de vol à tarif fixe garanti.
+                      <Crown size={32} className="relative z-10 mx-auto mb-4 text-[#d9b84f]" />
+                      <h3 className="relative z-10 mb-2 text-2xl font-light text-white">Jet Card ESIJET</h3>
+                      <p className="relative z-10 mb-6 text-sm leading-relaxed text-white/60">
+                        La sérénité d'avoir un jet privé toujours à disposition. Achetez vos heures de vol à l'avance et profitez de tarifs bloqués toute l'année, sans les contraintes de l'affrètement classique.
                       </p>
+                      
+                      <div className="relative z-10 flex flex-col gap-3 text-left mb-6">
+                        <div className="flex items-center gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
+                            <CreditCard size={18} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-white">Tarifs garantis</p>
+                            <p className="text-xs text-white/50">Aucune fluctuation à l'année</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
+                            <Timer size={18} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-white">Disponibilité 48h</p>
+                            <p className="text-xs text-white/50">Un appareil prêt à décoller</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
+                            <PlaneTakeoff size={18} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-white">Flotte d'exception</p>
+                            <p className="text-xs text-white/50">Accès prioritaire aux jets</p>
+                          </div>
+                        </div>
+                      </div>
+
                       <button
                         onClick={() => {
                           vibrate(8);
                           setJetCardOpen(true);
                           setPanelOpen(false);
                         }}
-                        className={`relative z-10 mt-5 w-full rounded-full py-3 text-[11px] font-bold uppercase tracking-widest text-black ${styles.goldGrad}`}
+                        className={`cursor-pointer relative z-10 w-full rounded-full py-4 text-[13px] font-bold uppercase tracking-widest text-black ${styles.goldGrad}`}
                       >
-                        Adhérer
+                        Devenir Membre
                       </button>
                     </div>
                   </div>
@@ -2922,15 +3224,18 @@ export default function Home() {
             <button
               key={item.id}
               onClick={() => {
+                vibrate(8);
                 if (item.id === "menu") {
                   setPanelOpen(true);
                   setMenuTab("Menu");
                 } else {
                   setActiveTab(item.id);
                   if (item.id === "explorer") window.scrollTo({ top: 0, behavior: "smooth" });
+                  if (item.id === "voyages") goTo("experiences");
+                  if (item.id === "client") goTo("about");
                 }
               }}
-              className="flex flex-col items-center gap-1.5 transition-transform hover:scale-105"
+              className="cursor-pointer flex flex-col items-center gap-1.5 transition-transform hover:scale-105"
             >
               <item.icon
                 size={20}
