@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, Component } from "react";
 import { AnimatePresence, motion, PanInfo } from "framer-motion";
 import {
   Search,
@@ -38,7 +38,12 @@ import {
   Globe,
   Star,
   Utensils,
-  LogOut
+  LogOut,
+  Building2,
+  IdCard,
+  FileText,
+  Download,
+  CalendarCheck
 } from "lucide-react";
 import {
   Drawer,
@@ -69,6 +74,50 @@ const isValidInternationalPhone = (phone?: string) => {
 
 const MapBox = dynamic(() => import("@/components/MapBox"), { ssr: false });
 
+class MapErrorBoundary extends Component<{children: React.ReactNode}, {hasError: boolean}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: any, info: any) {
+    console.error("MapBox Error:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#050608]/80">
+          <span className="text-[10px] uppercase tracking-widest text-white/30">Carte indisponible</span>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const getMapOriginFromAirport = (airport: any): [number, number] | null => {
+  if (!airport) return null;
+  if (typeof airport.lat === "number" && typeof airport.lon === "number") return [airport.lat, airport.lon];
+  if (typeof airport.latitude === "number" && typeof airport.longitude === "number") return [airport.latitude, airport.longitude];
+  if (typeof airport.lat === "number" && typeof airport.lng === "number") return [airport.lat, airport.lng];
+  if (Array.isArray(airport.coords) && airport.coords.length === 2) return [airport.coords[0], airport.coords[1]];
+  return null;
+};
+
+const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const R = 6371; 
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 type Vehicle = {
   id: string;
   name: string;
@@ -79,6 +128,7 @@ type Vehicle = {
   bag: string;
   subtitle: string;
   price: string;
+  pricePerKm?: number;
   avail: string;
   images: string[];
   desc: string;
@@ -86,6 +136,54 @@ type Vehicle = {
 };
 
 type TripType = "simple" | "retour";
+
+const getEstimatedPrice = (
+  dep: any, 
+  arr: any, 
+  jet: Vehicle | null | undefined, 
+  tripType: string,
+  fallbackOrigin?: [number, number],
+  fallbackDest?: [number, number]
+) => {
+  if (!jet) return "";
+  
+  let origin = getMapOriginFromAirport(dep) || fallbackOrigin;
+  let dest = getMapOriginFromAirport(arr) || fallbackDest;
+  
+  if (!origin || !dest || !jet.pricePerKm) return jet.price;
+  
+  const staticPriceNum = parseInt(jet.price.replace(/\D/g, '')) || 0;
+  const dist = getDistanceFromLatLonInKm(origin[0], origin[1], dest[0], dest[1]);
+  
+  let estimatedPrice = dist * jet.pricePerKm;
+  if (tripType === "retour") estimatedPrice *= 2;
+  
+  estimatedPrice = Math.max(estimatedPrice, staticPriceNum * (tripType === "retour" ? 2 : 1));
+  const rounded = Math.round(estimatedPrice / 100) * 100;
+  return `~ ${rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")} €`;
+};
+
+const getDynamicFlightInfo = (dep: any, arr: any, jet: Vehicle, fallbackOrigin: [number, number], fallbackDest: [number, number]) => {
+  let origin = getMapOriginFromAirport(dep) || fallbackOrigin;
+  let dest = getMapOriginFromAirport(arr) || fallbackDest;
+  
+  if (!origin || !dest) return { time: jet.time, stops: 0 };
+  
+  const dist = getDistanceFromLatLonInKm(origin[0], origin[1], dest[0], dest[1]);
+  
+  const speedKmH = parseInt(jet.speed.replace(/\D/g, '')) || 800;
+  const rangeKm = parseInt(jet.range.replace(/\D/g, '')) || 3000;
+  
+  const timeHours = dist / speedKmH;
+  const h = Math.floor(timeHours);
+  const m = Math.round((timeHours - h) * 60);
+  const formattedTime = `${h}h${m.toString().padStart(2, '0')}`;
+  
+  const safeRange = rangeKm * 0.95; 
+  const stops = Math.floor(dist / safeRange);
+  
+  return { time: formattedTime, stops };
+};
 
 type Flight = {
   id: number;
@@ -113,15 +211,19 @@ type BookingPayload = {
   note?: string;
   jet?: Vehicle | null;
   contact?: {
+    civility: string;
     firstName: string;
     lastName: string;
     phone: string;
     email: string;
     nationality: string;
     dob: string;
+    passport: string;
+    company: string;
   };
   services?: Record<string, boolean>;
   catering?: string[];
+  luggageCount?: number;
   isLocked?: boolean;
   isCustomRoute?: boolean;
 };
@@ -198,7 +300,6 @@ const styles = {
     "w-full bg-transparent text-sm text-white/90 outline-none placeholder:text-white/30 [color-scheme:dark]",
 };
 
-// Fonction helper pour forcer le bon aéroport des vols prédéfinis
 const getPredefinedAirport = (city: string): Airport | null => {
   const codes: Record<string, string> = {
     "Nice": "NCE",
@@ -241,6 +342,7 @@ const flights: Flight[] = [
         range: "2 200 km",
         bag: "2 valises",
         price: "À partir de 4 500 €",
+        pricePerKm: 6,
         avail: "Départ sous 4h",
         pop: false,
         desc: "Le choix idéal pour les vols courts. Une cabine intime pour rejoindre rapidement votre destination.",
@@ -256,6 +358,7 @@ const flights: Flight[] = [
         range: "4 500 km",
         bag: "4 valises",
         price: "À partir de 7 200 €",
+        pricePerKm: 9,
         avail: "Départ sous 6h",
         pop: true,
         desc: "L'équilibre parfait entre confort et performance, avec une cabine spacieuse pour travailler ou se détendre.",
@@ -271,6 +374,7 @@ const flights: Flight[] = [
         range: "7 000 km",
         bag: "8 valises",
         price: "À partir de 12 000 €",
+        pricePerKm: 14,
         avail: "Sur demande",
         pop: false,
         desc: "Le summum du luxe. De grands espaces, une capacité bagages optimale et un service de bord personnalisé.",
@@ -302,6 +406,7 @@ const flights: Flight[] = [
         range: "1 800 km",
         bag: "1 valise",
         price: "À partir de 3 800 €",
+        pricePerKm: 4.5,
         avail: "Départ sous 4h",
         pop: false,
         desc: "Idéal pour les déplacements rapides en comité restreint. Agile et parfaitement optimisé.",
@@ -317,6 +422,7 @@ const flights: Flight[] = [
         range: "2 800 km",
         bag: "3 valises",
         price: "À partir de 5 500 €",
+        pricePerKm: 6,
         avail: "Départ sous 6h",
         pop: true,
         desc: "Le jet d'affaires par excellence en Europe. Fiable, élégant et idéal pour de courtes distances.",
@@ -348,6 +454,7 @@ const flights: Flight[] = [
         range: "5 500 km",
         bag: "6 valises",
         price: "À partir de 28 000 €",
+        pricePerKm: 9,
         avail: "Départ sous 12h",
         pop: false,
         desc: "Traversez les continents avec style. Une cabine pensée pour le confort sur les longs trajets.",
@@ -363,6 +470,7 @@ const flights: Flight[] = [
         range: "9 000 km",
         bag: "10 valises",
         price: "À partir de 45 000 €",
+        pricePerKm: 14,
         avail: "Sur demande",
         pop: true,
         desc: "Notre fleuron long-courrier. Vivez une expérience First Class incomparable, de votre domicile à l'arrivée.",
@@ -430,7 +538,7 @@ const flightOptions = [
   {
     id: "luggage",
     name: "Bagages hors format",
-    icon: Luggage,
+    icon: Briefcase,
     desc: "Skis, matériel de golf, malles volumineuses",
   },
 ];
@@ -615,6 +723,8 @@ function FlightSearchForm({
   const isStep1Valid = dep !== null && arr !== null && dep.code !== arr.code;
   const isStep2Valid = date !== "" && (tripType === "simple" || returnDate !== "");
 
+  const today = new Date().toISOString().split("T")[0];
+
   const submit = () =>
     onValider({
       dep,
@@ -624,9 +734,10 @@ function FlightSearchForm({
       returnDate,
       tripType,
       note,
-      contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
+      contact: { civility: "M.", firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "", passport: "", company: "" },
       services: {},
       catering: [],
+      luggageCount: pax,
       isLocked: true,
       isCustomRoute: true,
     });
@@ -670,17 +781,14 @@ function FlightSearchForm({
           ph="Aéroport d'arrivée"
         />
 
-        {!isStep1Valid && dep && arr && dep.code === arr.code && (
-          <p className="text-xs text-[#d9b84f]">Le départ et l’arrivée doivent être différents.</p>
-        )}
-
-        <div className={cx("grid gap-4 mt-2", tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
+        <div className={cx("grid gap-4 mt-2", tripType === "retour" ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1")}>
           <div className="flex flex-col gap-1.5 w-full">
             <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de départ</label>
             <div className="relative">
               <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
               <input
                 type="date"
+                min={today}
                 value={date}
                 onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                 onChange={(e) => setDate(e.target.value)}
@@ -696,6 +804,7 @@ function FlightSearchForm({
                 <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
                 <input
                   type="date"
+                  min={date || today}
                   value={returnDate}
                   onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                   onChange={(e) => setReturnDate(e.target.value)}
@@ -727,23 +836,35 @@ function FlightSearchForm({
           </div>
         )}
 
-        <motion.button
-          type="button"
-          disabled={!isStep1Valid || !isStep2Valid}
-          onClick={() => {
-            vibrate([10, 20, 10]);
-            submit();
-          }}
-          whileTap={{ scale: !isStep1Valid || !isStep2Valid ? 1 : 0.98 }}
-          className={cx(
-            "mt-4 w-full rounded-2xl py-4.5 text-sm font-bold uppercase tracking-[0.18em] text-black transition-all cursor-pointer",
-            !isStep1Valid || !isStep2Valid
-              ? "cursor-not-allowed bg-white/10 text-white/30"
-              : styles.goldGrad,
-          )}
-        >
-          DEMANDER UN DEVIS
-        </motion.button>
+        <div className="mt-4 flex flex-col items-center w-full">
+          {!isStep1Valid ? (
+            <p className="text-[11px] text-[#d9b84f] font-medium mb-3 bg-[#d9b84f]/10 py-2 px-4 rounded-full border border-[#d9b84f]/20">
+              ⚠️ Veuillez sélectionner un départ et une arrivée distincts.
+            </p>
+          ) : !isStep2Valid ? (
+            <p className="text-[11px] text-[#d9b84f] font-medium mb-3 bg-[#d9b84f]/10 py-2 px-4 rounded-full border border-[#d9b84f]/20">
+              ⚠️ Veuillez sélectionner vos dates de voyage.
+            </p>
+          ) : null}
+
+          <motion.button
+            type="button"
+            disabled={!isStep1Valid || !isStep2Valid}
+            onClick={() => {
+              vibrate([10, 20, 10]);
+              submit();
+            }}
+            whileTap={{ scale: !isStep1Valid || !isStep2Valid ? 1 : 0.98 }}
+            className={cx(
+              "w-full rounded-2xl py-4.5 text-sm font-bold uppercase tracking-[0.18em] text-black transition-all cursor-pointer",
+              !isStep1Valid || !isStep2Valid
+                ? "cursor-not-allowed bg-white/10 text-white/30"
+                : styles.goldGrad,
+            )}
+          >
+            DEMANDER UN DEVIS
+          </motion.button>
+        </div>
       </div>
     );
   }
@@ -799,26 +920,32 @@ function FlightSearchForm({
               Icon={PlaneLanding}
               ph="Aéroport d'arrivée"
             />
-            {!isStep1Valid && dep && arr && dep.code === arr.code && (
-              <p className="text-xs text-[#d9b84f]">Le départ et l’arrivée doivent être différents.</p>
-            )}
-            <motion.button
-              type="button"
-              disabled={!isStep1Valid}
-              onClick={() => {
-                vibrate(8);
-                setStep(2);
-              }}
-              whileTap={{ scale: isStep1Valid ? 0.98 : 1 }}
-              className={cx(
-                "mt-2 w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all cursor-pointer",
-                isStep1Valid
-                  ? "bg-[#d9b84f] text-black"
-                  : "cursor-not-allowed bg-white/5 text-white/30",
+            
+            <div className="mt-4 flex flex-col items-center w-full">
+              {!isStep1Valid && (
+                <p className="text-[11px] text-[#d9b84f] font-medium mb-3 bg-[#d9b84f]/10 py-2 px-4 rounded-full border border-[#d9b84f]/20 text-center w-full">
+                  ⚠️ Sélection d'aéroports distincts requise.
+                </p>
               )}
-            >
-              Continuer
-            </motion.button>
+
+              <motion.button
+                type="button"
+                disabled={!isStep1Valid}
+                onClick={() => {
+                  vibrate(8);
+                  setStep(2);
+                }}
+                whileTap={{ scale: isStep1Valid ? 0.98 : 1 }}
+                className={cx(
+                  "w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all cursor-pointer",
+                  isStep1Valid
+                    ? "bg-[#d9b84f] text-black"
+                    : "cursor-not-allowed bg-white/5 text-white/30",
+                )}
+              >
+                Continuer
+              </motion.button>
+            </div>
           </motion.div>
         )}
 
@@ -851,13 +978,14 @@ function FlightSearchForm({
               ))}
             </div>
 
-            <div className={cx("grid gap-4 mt-2", tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
+            <div className={cx("grid gap-4 mt-2", tripType === "retour" ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1")}>
               <div className="flex flex-col gap-1.5 w-full">
                 <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de départ</label>
                 <div className="relative">
                   <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
                   <input
                     type="date"
+                    min={today}
                     value={date}
                     onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                     onChange={(e) => setDate(e.target.value)}
@@ -873,6 +1001,7 @@ function FlightSearchForm({
                     <CalendarDays className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#d9b84f]/50" size={18} />
                     <input
                       type="date"
+                      min={date || today}
                       value={returnDate}
                       onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                       onChange={(e) => setReturnDate(e.target.value)}
@@ -892,23 +1021,31 @@ function FlightSearchForm({
               ph="Passagers"
             />
 
-            <motion.button
-              type="button"
-              disabled={!isStep2Valid}
-              onClick={() => {
-                vibrate(8);
-                setStep(3);
-              }}
-              whileTap={{ scale: isStep2Valid ? 0.98 : 1 }}
-              className={cx(
-                "mt-2 w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all cursor-pointer",
-                isStep2Valid
-                  ? "bg-[#d9b84f] text-black"
-                  : "cursor-not-allowed bg-white/5 text-white/30",
+            <div className="mt-4 flex flex-col items-center w-full">
+              {!isStep2Valid && (
+                <p className="text-[11px] text-[#d9b84f] font-medium mb-3 bg-[#d9b84f]/10 py-2 px-4 rounded-full border border-[#d9b84f]/20 text-center w-full">
+                  ⚠️ Veuillez sélectionner vos dates de vol.
+                </p>
               )}
-            >
-              Détails finaux
-            </motion.button>
+
+              <motion.button
+                type="button"
+                disabled={!isStep2Valid}
+                onClick={() => {
+                  vibrate(8);
+                  setStep(3);
+                }}
+                whileTap={{ scale: isStep2Valid ? 0.98 : 1 }}
+                className={cx(
+                  "w-full rounded-2xl py-4 text-sm font-bold uppercase tracking-[0.18em] transition-all cursor-pointer",
+                  isStep2Valid
+                    ? "bg-[#d9b84f] text-black"
+                    : "cursor-not-allowed bg-white/5 text-white/30",
+                )}
+              >
+                Détails finaux
+              </motion.button>
+            </div>
           </motion.div>
         )}
 
@@ -962,8 +1099,10 @@ function FlightSearchForm({
 
 export default function Home() {
   const [isDesktop, setIsDesktop] = useState(true);
-  const [lang, setLang] = useState<"fr" | "en">("fr"); // Variable d'état pour la langue
-  const [isLoggedIn, setIsLoggedIn] = useState(false); // Variable d'état pour l'Espace Membre
+  const [lang, setLang] = useState<"fr" | "en">("fr");
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  
+  const today = new Date().toISOString().split("T")[0];
   
   useEffect(() => {
     const handleResize = () => setIsDesktop(window.innerWidth >= 768);
@@ -976,6 +1115,9 @@ export default function Home() {
   const [uberDrawerOpen, setUberDrawerOpen] = useState(false);
   const [jetCardOpen, setJetCardOpen] = useState(false);
   const [emptyLegDrawerOpen, setEmptyLegDrawerOpen] = useState(false);
+  
+  // NOUVEAU : État pour le Dashboard VIP
+  const [vipDashboardOpen, setVipDashboardOpen] = useState(false);
 
   const [activeTab, setActiveTab] = useState("explorer");
   const [menuTab, setMenuTab] = useState<(typeof M_TABS)[number]>("Menu");
@@ -999,15 +1141,16 @@ export default function Home() {
     tripType: "simple",
     returnDate: "",
     jet: flights[0].vehicles[0],
-    contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
+    contact: { civility: "M.", firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "", passport: "", company: "" },
     services: {},
     catering: [],
+    luggageCount: 1,
     note: "",
     isLocked: false,
     isCustomRoute: false,
   });
 
-  const [jcForm, setJcForm] = useState({ hours: 25, firstName: "", lastName: "", email: "", phone: "", nationality: "", dob: "" });
+  const [jcForm, setJcForm] = useState({ civility: "M.", hours: 25, firstName: "", lastName: "", email: "", phone: "", nationality: "", dob: "" });
   const [selectedEmptyLeg, setSelectedEmptyLeg] = useState<EmptyLeg | null>(null);
 
   const experiencesRef = useRef<HTMLDivElement>(null);
@@ -1065,6 +1208,7 @@ export default function Home() {
     setPanelOpen(false);
     setEmptyLegDrawerOpen(false);
     setJetCardOpen(false);
+    setVipDashboardOpen(false);
   };
 
   const openBookingDrawer = () => {
@@ -1113,15 +1257,19 @@ export default function Home() {
       note: payload.note ?? "",
       jet: matchedJet,
       contact: {
+        civility: payload.contact?.civility ?? "M.",
         firstName: payload.contact?.firstName ?? "",
         lastName: payload.contact?.lastName ?? "",
         phone: payload.contact?.phone ?? "",
         email: payload.contact?.email ?? "",
         nationality: payload.contact?.nationality ?? "",
         dob: payload.contact?.dob ?? "",
+        passport: payload.contact?.passport ?? "",
+        company: payload.contact?.company ?? "",
       },
       services: { ...getDefaultServices(), ...(payload.services ?? {}) },
       catering: payload.catering ?? [],
+      luggageCount: payload.pax ?? 1,
       isLocked: payload.isLocked ?? false,
       isCustomRoute: isCustom,
     });
@@ -1155,9 +1303,10 @@ export default function Home() {
       tripType: "simple",
       note: `Demande issue d’un empty leg ${leg.from} → ${leg.to}`,
       jet: matchedJet,
-      contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
+      contact: { civility: "M.", firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "", passport: "", company: "" },
       services: getDefaultServices(),
       catering: [],
+      luggageCount: leg.pax,
       isLocked: true,
       isCustomRoute: false,
     });
@@ -1190,7 +1339,7 @@ export default function Home() {
       pax: 1, 
       date: "", 
       tripType: "simple", 
-      contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
+      contact: { civility: "M.", firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "", passport: "", company: "" },
       isLocked: true
     }, f.id);
   };
@@ -1231,10 +1380,12 @@ export default function Home() {
   
   const isStep4Valid = useMemo(
     () =>
+      !!bd.contact?.civility &&
       !!bd.contact?.firstName?.trim() &&
       !!bd.contact?.lastName?.trim() &&
       !!bd.contact?.nationality?.trim() &&
       !!bd.contact?.dob?.trim() &&
+      !!bd.contact?.passport?.trim() &&
       isValidInternationalPhone(bd.contact?.phone) &&
       isValidEmail(bd.contact?.email),
     [bd],
@@ -1296,29 +1447,26 @@ export default function Home() {
     [],
   );
 
-  const getMapOrigin = () => {
+  const getMapOrigin = (): [number, number] | null => {
     if (selectedEmptyLeg) return selectedEmptyLeg.origin;
-    if (bd.dep && "lat" in bd.dep && typeof (bd.dep as any).lat === "number") return [(bd.dep as any).lat, (bd.dep as any).lon];
-    if (bd.dep && "coords" in bd.dep && Array.isArray((bd.dep as any).coords)) return (bd.dep as any).coords;
-    return selectedFlightData.origin;
+    return getMapOriginFromAirport(bd.dep) || selectedFlightData.origin;
   };
 
-  const getMapDest = () => {
+  const getMapDest = (): [number, number] | null => {
     if (selectedEmptyLeg) return selectedEmptyLeg.dest;
-    if (bd.arr && "lat" in bd.arr && typeof (bd.arr as any).lat === "number") return [(bd.arr as any).lat, (bd.arr as any).lon];
-    if (bd.arr && "coords" in bd.arr && Array.isArray((bd.arr as any).coords)) return (bd.arr as any).coords;
-    return selectedFlightData.dest;
+    return getMapOriginFromAirport(bd.arr) || selectedFlightData.dest;
   };
 
   const isJcValid = !!(jcForm.firstName.trim() && jcForm.lastName.trim() && isValidInternationalPhone(jcForm.phone) && isValidEmail(jcForm.email) && jcForm.nationality.trim() && jcForm.dob.trim());
 
-  // Contenu modale Empty Leg
   const emptyLegContent = (
     <div className="relative z-50 mx-auto flex h-[85svh] w-full max-w-[1000px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[80vh] md:flex-row">
       <div className="relative h-[35%] w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
         <div className="pointer-events-none absolute inset-0 grayscale opacity-40 mix-blend-screen">
           {emptyLegDrawerOpen && selectedEmptyLeg && (
-            <MapBox origin={selectedEmptyLeg.origin} dest={selectedEmptyLeg.dest} />
+            <MapErrorBoundary>
+              <MapBox origin={selectedEmptyLeg.origin} dest={selectedEmptyLeg.dest} />
+            </MapErrorBoundary>
           )}
         </div>
 
@@ -1385,12 +1533,16 @@ export default function Home() {
     </div>
   );
 
-  // Contenu modale Jet Card
+  // FIX ET AMELIORATION DE LA MODALE JET CARD (Taille 1300px comme Booking + Formulaire + Image droite)
   const jetCardContent = (
-    <div className="relative z-50 mx-auto flex h-[82svh] w-full max-w-[1150px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[78vh] md:flex-row">
-      <div className="relative h-[35%] w-full shrink-0 bg-black border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
-        <Image src="/jet.jpg" alt="Jet Card ESIJET" fill className="object-cover opacity-40 grayscale mix-blend-screen" />
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-[#000000] to-transparent p-6 text-center">
+    <div className="relative z-50 mx-auto flex h-[82svh] w-full max-w-[1300px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[75vh] md:flex-row">
+      
+      {/* IMAGE À DROITE SUR PC (55%) */}
+      <div className="relative h-[25%] w-full shrink-0 bg-black border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[55%] md:border-b-0 md:border-l">
+        <div className="absolute inset-0 [mask-image:linear-gradient(to_bottom,transparent_5%,black_20%,black_80%,transparent_95%)]">
+          <Image src="/jet.jpg" alt="Jet Card ESIJET" fill className="object-cover opacity-40 grayscale mix-blend-screen pointer-events-none" />
+        </div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-[#000000] to-transparent p-6 text-center pointer-events-none">
             <Crown size={56} className="mb-4 text-[#d9b84f] drop-shadow-[0_0_15px_rgba(217,184,79,0.5)]" />
             <h3 className="mb-2 text-3xl font-light text-white">Jet Card</h3>
             <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">L'ultime liberté de voler.</p>
@@ -1398,13 +1550,14 @@ export default function Home() {
         <button
           onClick={() => setJetCardOpen(false)}
           aria-label="Fermer"
-          className="cursor-pointer absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-xl transition hover:bg-white/20"
+          className="cursor-pointer absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/30 bg-[#050608]/80 text-[#d9b84f] backdrop-blur-xl transition hover:bg-[#d9b84f]/10"
         >
           <X size={18} />
         </button>
       </div>
 
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#0a0a0c] p-6 text-white md:order-1 md:p-10">
+      {/* FORMULAIRE À GAUCHE SUR PC (45%) avec suppression des scrollbars moches */}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#0a0a0c] p-6 text-white md:order-1 md:w-[45%] md:p-10 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <h2 className="mb-1 text-2xl font-light">Adhésion Jet Card</h2>
           <p className="mb-10 text-xs text-white/50">Configurez votre abonnement d'heures de vol.</p>
 
@@ -1432,6 +1585,25 @@ export default function Home() {
             <div>
                 <label className="mb-4 block text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">Informations passager</label>
                 <div className="space-y-4">
+                  
+                  {/* Boutons Civilité Jet Card */}
+                  <div className="flex gap-3 mb-2">
+                    {["M.", "Mme"].map((civ) => (
+                      <button
+                        key={civ}
+                        onClick={() => { vibrate(8); setJcForm({ ...jcForm, civility: civ }); }}
+                        className={cx(
+                          "px-6 py-2.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition-all cursor-pointer",
+                          jcForm.civility === civ
+                            ? "bg-[#d9b84f] text-black shadow-[0_0_15px_rgba(217,184,79,0.3)]"
+                            : "bg-white/[0.02] border border-white/10 text-white/50 hover:border-white/30 hover:text-white"
+                        )}
+                      >
+                        {civ}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className={styles.inputWrapper}>
                       <User className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
@@ -1471,7 +1643,7 @@ export default function Home() {
                   <div className="space-y-2">
                     <div className={styles.inputWrapper}>
                       <PhoneCall className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
-                      <div className="flex-1">
+                      <div className="flex-1 w-full overflow-hidden">
                         <PhoneInput
                           international
                           defaultCountry="FR"
@@ -1488,7 +1660,7 @@ export default function Home() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 mt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
                     <div className="flex flex-col gap-1.5 w-full">
                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Nationalité</label>
                       <div className={styles.inputWrapper}>
@@ -1534,13 +1706,134 @@ export default function Home() {
     </div>
   );
 
-  // Contenu modale de Réservation Principale (Booking / Uber Drawer)
+  // NOUVEAU : LE DASHBOARD VIP (Simulé)
+  const vipDashboardContent = (
+    <div className="relative z-50 mx-auto flex h-[85svh] w-full max-w-[1300px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[75vh] md:flex-row">
+      
+      {/* Panneau latéral gauche (Profil et Solde) */}
+      <div className="relative w-full shrink-0 border-b border-[#d9b84f]/20 bg-[#0a0a0c] md:w-[35%] md:border-b-0 md:border-r p-8 flex flex-col justify-center items-center text-center">
+        <button
+          onClick={() => setVipDashboardOpen(false)}
+          className="md:hidden absolute right-5 top-5 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/30 bg-[#050608]/80 text-[#d9b84f]"
+        >
+          <X size={18} />
+        </button>
+
+        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[#d9b84f]/10 border border-[#d9b84f]/30">
+          <User size={32} className="text-[#d9b84f]" />
+        </div>
+        <h2 className="text-2xl font-light text-white mb-1">M. Jean Dupont</h2>
+        <span className="rounded-full bg-[#d9b84f]/20 px-3 py-1 text-[9px] font-extrabold uppercase tracking-widest text-[#d9b84f] border border-[#d9b84f]/30 mb-10">
+          Membre Jet Card
+        </span>
+
+        {/* Jauge Solde Heures */}
+        <div className="relative w-48 h-48 flex items-center justify-center rounded-full border-4 border-white/5 mb-8">
+          {/* Fausse barre de progression circulaire en CSS (conique) */}
+          <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#d9b84f] border-r-[#d9b84f] rotate-45" />
+          <div className="text-center">
+            <p className="text-3xl font-light text-white">14<span className="text-xl">h</span>30</p>
+            <p className="text-[10px] uppercase tracking-widest text-white/50 mt-1">Restantes sur 25h</p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            setIsLoggedIn(false);
+            setVipDashboardOpen(false);
+          }}
+          className="cursor-pointer flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-red-400 hover:text-red-300 transition-colors mt-auto"
+        >
+          <LogOut size={14} /> Se déconnecter
+        </button>
+      </div>
+
+      {/* Panneau principal de droite (Vols et Factures) */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#050608] p-6 text-white md:p-10 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        
+        <button
+          onClick={() => setVipDashboardOpen(false)}
+          className="hidden md:flex absolute right-5 top-5 z-20 h-10 w-10 items-center justify-center rounded-full border border-[#d9b84f]/30 bg-[#050608]/80 text-[#d9b84f] transition hover:bg-[#d9b84f]/10 cursor-pointer"
+        >
+          <X size={18} />
+        </button>
+
+        <h3 className="text-xl font-light mb-6 flex items-center gap-3">
+          <Plane className="text-[#d9b84f]" size={20} /> Prochain vol
+        </h3>
+        
+        <div className="rounded-[24px] border border-[#d9b84f]/30 bg-[#d9b84f]/5 p-6 mb-10 shadow-lg">
+          <div className="flex items-center justify-between mb-4">
+            <span className="rounded-full bg-white/10 px-3 py-1 text-[9px] font-bold uppercase tracking-widest text-white/70">
+              12 Novembre 2026
+            </span>
+            <span className="text-[10px] uppercase tracking-widest text-[#d9b84f] font-bold">
+              En préparation
+            </span>
+          </div>
+          <div className="flex items-center gap-4 mb-4">
+            <div className="text-right">
+              <p className="text-2xl font-light">Paris</p>
+              <p className="text-xs text-white/50 uppercase tracking-widest">LBG</p>
+            </div>
+            <div className="flex-1 flex flex-col items-center">
+              <div className="w-full h-px bg-gradient-to-r from-transparent via-[#d9b84f] to-transparent relative">
+                <Plane size={14} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[#d9b84f]" />
+              </div>
+              <p className="text-[10px] mt-2 text-white/40">1h10</p>
+            </div>
+            <div className="text-left">
+              <p className="text-2xl font-light">Genève</p>
+              <p className="text-xs text-white/50 uppercase tracking-widest">GVA</p>
+            </div>
+          </div>
+          <div className="flex justify-between border-t border-white/10 pt-4 text-xs text-white/70">
+            <span>Appareil : Midsize Jet</span>
+            <span>4 Passagers</span>
+          </div>
+        </div>
+
+        <h3 className="text-xl font-light mb-6 flex items-center gap-3">
+          <FileText className="text-[#d9b84f]" size={20} /> Dernières factures
+        </h3>
+
+        <div className="space-y-3">
+          {[
+            { id: "F-2026-089", date: "02 Oct 2026", desc: "Vol Ibiza -> Nice", amount: "4 500 €" },
+            { id: "F-2026-042", date: "15 Sep 2026", desc: "Abonnement Jet Card 25h", amount: "175 000 €" },
+          ].map((inv) => (
+            <div key={inv.id} className="flex items-center justify-between p-4 rounded-2xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.04] transition">
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-bold text-white">{inv.id} <span className="text-xs font-normal text-white/50 ml-2">{inv.date}</span></p>
+                <p className="text-xs text-white/60">{inv.desc}</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <span className="text-sm font-medium text-[#d9b84f]">{inv.amount}</span>
+                <button className="h-8 w-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-[#d9b84f] hover:text-black transition cursor-pointer">
+                  <Download size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+      </div>
+    </div>
+  );
+
+  const mOrigin = getMapOrigin();
+  const mDest = getMapDest();
+
   const bookingContent = (
-    <div className="relative z-50 mx-auto flex h-[82svh] w-full max-w-[1150px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[78vh] md:flex-row">
-      <div className="relative h-[28%] w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[50%] md:border-b-0 md:border-l">
-        <div className="pointer-events-none absolute inset-0 grayscale opacity-40 mix-blend-screen">
-          {uberDrawerOpen && (
-            <MapBox origin={getMapOrigin()} dest={getMapDest()} />
+    <div className="relative z-50 mx-auto flex h-[82svh] w-full max-w-[1300px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[75vh] md:flex-row">
+      
+      {/* SECTION CARTE : Elargie à 55% sur PC avec masque CSS vertical pour cacher le haut/bas vide */}
+      <div className="relative h-[25%] flex items-center justify-center w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[55%] md:border-b-0 md:border-l bg-[#050608]">
+        <div className="absolute inset-0 grayscale opacity-40 mix-blend-screen pointer-events-none [mask-image:linear-gradient(to_bottom,transparent_5%,black_20%,black_80%,transparent_95%)]">
+          {uberDrawerOpen && mOrigin && mDest && (
+            <MapErrorBoundary>
+              <MapBox origin={mOrigin} dest={mDest} />
+            </MapErrorBoundary>
           )}
         </div>
 
@@ -1556,8 +1849,27 @@ export default function Home() {
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col bg-[#050608] text-white md:order-1">
-        <div className="flex min-h-[80px] shrink-0 items-center justify-between px-5 pt-5 md:px-6 md:pt-10">
+      <div className="flex min-h-0 flex-1 flex-col bg-[#050608] text-white md:order-1 md:w-[45%]">
+        
+        {/* NOUVEAU : Barre de progression 5 étapes */}
+        <div className="px-5 pt-6 pb-2 md:px-6 md:pt-8 w-full shrink-0">
+          <div className="flex w-full gap-1.5 justify-between">
+            {[1, 2, 3, 4, 5].map((s) => (
+              <div
+                key={s}
+                className={cx(
+                  "h-1.5 flex-1 rounded-full transition-all duration-500",
+                  drawerStep >= s ? "bg-[#d9b84f]" : "bg-white/10"
+                )}
+              />
+            ))}
+          </div>
+          <p className="mt-2 text-right text-[9px] font-bold uppercase tracking-widest text-[#d9b84f]">
+            Étape {drawerStep} sur 5
+          </p>
+        </div>
+
+        <div className="flex min-h-[60px] shrink-0 items-center justify-between px-5 md:px-6 pb-2">
           {detailedVehicle ? (
             <button
               onClick={() => {
@@ -1619,12 +1931,6 @@ export default function Home() {
               ))}
             </div>
           )}
-
-          {drawerStep === 2 && detailedVehicle && (
-            <span className="ml-auto text-[11px] font-bold uppercase tracking-widest text-[#d9b84f] shrink-0">
-              Étape 2 / 5
-            </span>
-          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 pb-4 md:px-6 [-ms-overflow-style:none] [mask-image:linear-gradient(to_bottom,black_85%,transparent_100%)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1635,7 +1941,7 @@ export default function Home() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
-                className="mt-4 space-y-5 pb-10"
+                className="mt-2 space-y-5 pb-10"
               >
                 <div>
                   <h2 className="mb-1 text-2xl font-light text-white">Votre itinéraire</h2>
@@ -1682,13 +1988,14 @@ export default function Home() {
                   disabled={bd.isLocked}
                 />
 
-                <div className={cx("grid gap-4 mt-2", bd.tripType === "retour" ? "grid-cols-2" : "grid-cols-1")}>
+                <div className={cx("grid gap-4 mt-2", bd.tripType === "retour" ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1")}>
                   <div className="flex flex-col gap-1.5 w-full">
                     <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Date de départ</label>
                     <div className={styles.inputWrapper}>
                       <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
                       <input
                         type="date"
+                        min={today}
                         value={bd.date}
                         onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                         onChange={(e) => setBd({ ...bd, date: e.target.value })}
@@ -1704,6 +2011,7 @@ export default function Home() {
                         <CalendarDays className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
                         <input
                           type="date"
+                          min={bd.date || today}
                           value={bd.returnDate || ""}
                           onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                           onChange={(e) => setBd({ ...bd, returnDate: e.target.value })}
@@ -1717,7 +2025,7 @@ export default function Home() {
                 <CustomSelect
                   type="pax"
                   pax={bd.pax}
-                  setPax={(p: number) => setBd({ ...bd, pax: p })}
+                  setPax={(p: number) => setBd({ ...bd, pax: p, luggageCount: p })}
                   maxPax={30}
                   Icon={Users}
                   ph="Passagers"
@@ -1839,6 +2147,9 @@ export default function Home() {
 
                 {selectedFlightData.vehicles.map((v) => {
                   const isSelected = bd.jet?.id === v.id;
+                  
+                  const { time: dynamicTime, stops } = getDynamicFlightInfo(bd.dep, bd.arr, v, selectedFlightData.origin, selectedFlightData.dest);
+
                   return (
                     <div
                       key={v.id}
@@ -1850,36 +2161,47 @@ export default function Home() {
                       className={cx(
                         "cursor-pointer rounded-[28px] border p-5 transition-all",
                         isSelected
-                          ? "scale-[1.02] border-[#d9b84f] bg-[#d9b84f]/10 text-white shadow-[0_10px_30px_rgba(217,184,79,0.15)]"
-                          : "border-white/10 bg-transparent text-white hover:border-[#d9b84f]/40",
+                          ? "scale-[1.02] border-[#d9b84f] bg-[#d9b84f]/10 shadow-[0_10px_30px_rgba(217,184,79,0.15)]"
+                          : "border-white/10 bg-transparent hover:border-[#d9b84f]/40",
                       )}
                     >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-3">
-                            <h3 className="text-lg font-bold">{v.name}</h3>
-                            <span className="rounded-sm bg-[#d9b84f] px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-black">
-                              {v.price}
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          
+                          <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                            <h3 className="text-lg font-bold text-white truncate max-w-full">{v.name}</h3>
+                            <span className="shrink-0 rounded-sm bg-[#d9b84f] px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-black">
+                              {getEstimatedPrice(bd.dep, bd.arr, v, bd.tripType || "simple", selectedFlightData.origin, selectedFlightData.dest)}
                             </span>
                           </div>
+                          
                           <p
                             className={cx(
-                              "mt-1 text-xs font-medium uppercase tracking-widest",
+                              "text-xs font-medium uppercase tracking-widest mb-3 line-clamp-2 leading-relaxed",
                               isSelected ? "text-[#d9b84f]" : "text-white/50",
                             )}
                           >
                             {v.subtitle}
                           </p>
+
                           <div
                             className={cx(
-                              "mt-3 flex items-center gap-3 text-[11px]",
+                              "flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]",
                               isSelected ? "text-white/90" : "text-white/50",
                             )}
                           >
                             <span>{v.seats} pax</span>
                             <span>•</span>
-                            <span>{v.time}</span>
-                            {v.pop && (
+                            <span>{dynamicTime}</span>
+                            
+                            {stops > 0 && (
+                              <>
+                                <span>•</span>
+                                <span className="text-orange-400 font-bold">{stops} escale{stops > 1 ? 's' : ''}</span>
+                              </>
+                            )}
+
+                            {v.pop && stops === 0 && (
                               <>
                                 <span>•</span>
                                 <span className={isSelected ? "text-[#d9b84f]" : "text-[#d9b84f]/70"}>
@@ -1890,7 +2212,6 @@ export default function Home() {
                           </div>
                         </div>
 
-                        {/* BOUTON DÉTAILS SOUS FORME DE MINIATURE */}
                         <button
                           aria-label="Voir les photos"
                           onClick={(e) => {
@@ -1919,6 +2240,7 @@ export default function Home() {
                             </span>
                           </div>
                         </button>
+
                       </div>
                     </div>
                   );
@@ -1932,7 +2254,7 @@ export default function Home() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
-                className="mt-4 space-y-4 pb-10"
+                className="mt-2 space-y-4 pb-10"
               >
                 <div className="mb-6">
                   <h2 className="mb-1 text-2xl font-light text-white">Options de vol</h2>
@@ -1976,7 +2298,45 @@ export default function Home() {
                   );
                 })}
 
-                {/* Ajout de la section Restauration / Catering */}
+                {/* NOUVEAU : Compteur de bagages soute */}
+                <div className="mt-8 border-t border-white/10 pt-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/[0.02] p-5 rounded-2xl border border-white/5">
+                    <div>
+                      <h3 className="text-[13px] font-bold text-white flex items-center gap-2 mb-1">
+                        <Luggage size={16} className="text-[#d9b84f]" /> Bagages en soute
+                      </h3>
+                      <p className="text-[10px] uppercase tracking-widest text-[#d9b84f]/70">
+                        Standards (Max 23kg / valise)
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-5 bg-black/40 rounded-full px-4 py-2 border border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          vibrate(8);
+                          setBd({...bd, luggageCount: Math.max(0, (bd.luggageCount || 0) - 1)});
+                        }}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-[#d9b84f] hover:text-black cursor-pointer"
+                      >
+                        -
+                      </button>
+                      <span className="w-6 text-center text-sm font-bold text-white">
+                        {bd.luggageCount || 0}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          vibrate(8);
+                          setBd({...bd, luggageCount: (bd.luggageCount || 0) + 1});
+                        }}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-[#d9b84f] hover:text-black cursor-pointer"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="mt-8 border-t border-white/10 pt-6">
                   <h3 className="mb-4 text-[11px] font-bold uppercase tracking-widest text-[#d9b84f] flex items-center gap-2">
                     <Utensils size={14} /> Restauration à bord
@@ -2028,17 +2388,38 @@ export default function Home() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
-                className="mt-4 space-y-4 pb-10"
+                className="mt-2 space-y-4 pb-10"
               >
                 <div className="mb-6">
                   <h2 className="mb-1 text-2xl font-light text-white">Informations passager</h2>
                   <p className="text-xs uppercase tracking-widest text-[#d9b84f]/70">
-                    Coordonnées requises pour le plan de vol.
+                    Coordonnées du passager principal.
                   </p>
                 </div>
 
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* NOUVEAU : Civilité */}
+                  <div className="flex gap-3 mb-2">
+                    {["M.", "Mme"].map((civ) => (
+                      <button
+                        key={civ}
+                        onClick={() => {
+                          vibrate(8);
+                          setBd({ ...bd, contact: { ...bd.contact!, civility: civ } });
+                        }}
+                        className={cx(
+                          "px-6 py-2.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition-all cursor-pointer",
+                          bd.contact?.civility === civ
+                            ? "bg-[#d9b84f] text-black shadow-[0_0_15px_rgba(217,184,79,0.3)]"
+                            : "bg-white/[0.02] border border-white/10 text-white/50 hover:border-white/30 hover:text-white"
+                        )}
+                      >
+                        {civ}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className={styles.inputWrapper}>
                       <User className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
                       <input
@@ -2062,7 +2443,7 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className={styles.inputWrapper}>
                       <MessageSquare className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
                       <input
@@ -2075,20 +2456,15 @@ export default function Home() {
                         className={styles.inputField}
                       />
                     </div>
-                    {bd.contact?.email && !isValidEmail(bd.contact.email) && (
-                      <p className="text-xs text-red-400">Entrez une adresse email valide.</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
+                    
                     <div className={styles.inputWrapper}>
                       <PhoneCall className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
-                      <div className="flex-1">
+                      <div className="flex-1 w-full overflow-hidden">
                         <PhoneInput
                           international
                           defaultCountry="FR"
                           countryCallingCodeEditable={false}
-                          placeholder="Téléphone avec indicatif"
+                          placeholder="Téléphone"
                           value={bd.contact?.phone || ""}
                           onChange={(value) =>
                             setBd({ ...bd, contact: { ...bd.contact!, phone: value || "" } })
@@ -2097,12 +2473,19 @@ export default function Home() {
                         />
                       </div>
                     </div>
+                  </div>
+                  
+                  {/* Messages d'erreurs pour Email & Tel empilés sous la grille si besoin */}
+                  <div className="flex flex-col gap-1 px-1">
+                    {bd.contact?.email && !isValidEmail(bd.contact.email) && (
+                      <p className="text-[10px] text-red-400">⚠️ Email invalide.</p>
+                    )}
                     {bd.contact?.phone && !isValidInternationalPhone(bd.contact.phone) && (
-                      <p className="text-xs text-red-400">Entrez un numéro valide avec indicatif.</p>
+                      <p className="text-[10px] text-red-400">⚠️ Numéro invalide.</p>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 mt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-white/5">
                     <div className="flex flex-col gap-1.5 w-full">
                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Nationalité</label>
                       <div className={styles.inputWrapper}>
@@ -2130,6 +2513,37 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+
+                  {/* NOUVEAU : Passeport & Société */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f] pl-1">Numéro de Passeport</label>
+                      <div className={styles.inputWrapper}>
+                        <IdCard className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                        <input
+                          type="text"
+                          placeholder="Requis pour le vol"
+                          value={bd.contact?.passport ?? ""}
+                          onChange={(e) => setBd({ ...bd, contact: { ...bd.contact!, passport: e.target.value } })}
+                          className={styles.inputField}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5 w-full">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]/50 pl-1">Société (Optionnel)</label>
+                      <div className={styles.inputWrapper}>
+                        <Building2 className="mr-3 shrink-0 text-[#d9b84f]/60" size={18} />
+                        <input
+                          type="text"
+                          placeholder="Nom de l'entreprise"
+                          value={bd.contact?.company ?? ""}
+                          onChange={(e) => setBd({ ...bd, contact: { ...bd.contact!, company: e.target.value } })}
+                          className={styles.inputField}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               </motion.div>
             )}
@@ -2140,7 +2554,7 @@ export default function Home() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
-                className="mt-4 space-y-6 pb-10"
+                className="mt-2 space-y-6 pb-10"
               >
                 <div className="mb-2">
                   <h2 className="mb-1 text-2xl font-light text-white">Récapitulatif final</h2>
@@ -2161,82 +2575,69 @@ export default function Home() {
 
                   <div className="space-y-4 text-sm text-white/90">
                     <div className="flex justify-between border-b border-white/10 pb-4">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                        Trajet
-                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Trajet</span>
                       <span className="font-medium text-right">
                         {bd.tripType === "retour" ? "Aller-retour" : "Aller simple"}
                       </span>
                     </div>
+                    
                     <div className="flex justify-between border-b border-white/10 pb-4">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                        Dates
-                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Dates</span>
                       <span className="font-medium text-right text-[#d9b84f]">
                         {bd.date || "Date flexible"}{" "}
                         {bd.tripType === "retour" && bd.returnDate ? ` - ${bd.returnDate}` : ""}
                       </span>
                     </div>
+                    
                     <div className="flex justify-between border-b border-white/10 pb-4">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                        Passagers
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Passagers & Bagages</span>
+                      <span className="font-medium text-right">
+                        {bd.pax} pers. • {bd.luggageCount} bagage(s)
                       </span>
-                      <span className="font-medium text-right">{bd.pax} pers.</span>
                     </div>
+                    
                     <div className="flex justify-between border-b border-white/10 pb-4">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                        Appareil
-                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Appareil</span>
                       <span className="font-medium text-right">{bd.jet?.name}</span>
                     </div>
-                    {Object.entries(bd.services || {}).filter(([_, v]) => v).length > 0 && (
-                      <div className="flex justify-between border-b border-white/10 pb-4">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                          Options
-                        </span>
-                        <span className="font-medium text-right">
-                          {Object.keys(bd.services || {})
-                            .filter((k) => bd.services?.[k])
-                            .map((k) => flightOptions.find((o) => o.id === k)?.name)
-                            .join(", ")}
-                        </span>
-                      </div>
-                    )}
-                    {bd.catering && bd.catering.length > 0 && (
-                      <div className="flex justify-between border-b border-white/10 pb-4">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                          Restauration
-                        </span>
-                        <span className="font-medium text-right text-[#d9b84f]">
-                          {bd.catering.map(id => cateringOptions.find(c => c.id === id)?.label).join(", ")}
-                        </span>
-                      </div>
-                    )}
+
+                    {(() => {
+                      const finalDynamicInfo = getDynamicFlightInfo(bd.dep, bd.arr, bd.jet!, selectedFlightData.origin, selectedFlightData.dest);
+                      return (
+                        <div className="flex justify-between border-b border-white/10 pb-4">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
+                            Temps de vol
+                          </span>
+                          <span className="font-medium text-right">
+                            {finalDynamicInfo.time} 
+                            {finalDynamicInfo.stops > 0 && <span className="text-orange-400 ml-1">(+ {finalDynamicInfo.stops} escale{finalDynamicInfo.stops > 1 ? 's' : ''})</span>}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
                     <div className="flex justify-between border-b border-white/10 pb-4">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                        Contact
-                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Contact</span>
                       <span className="font-medium text-right">
-                        {bd.contact?.firstName} {bd.contact?.lastName}
-                        <br />
-                        <span className="text-xs text-white/50">{bd.contact?.phone} • {bd.contact?.email}</span>
+                        {bd.contact?.civility} {bd.contact?.firstName} {bd.contact?.lastName}
+                        {bd.contact?.company && <span className="block text-xs text-[#d9b84f]">{bd.contact.company}</span>}
+                        <span className="block text-xs text-white/50 mt-1">{bd.contact?.phone} • {bd.contact?.email}</span>
                       </span>
                     </div>
+
                     <div className="flex justify-between border-b border-white/10 pb-4">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-                        Passager principal
-                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Identité</span>
                       <span className="font-medium text-right">
-                        {bd.contact?.nationality}
-                        <br />
-                        <span className="text-xs text-white/50">Né(e) le {bd.contact?.dob}</span>
+                        Passport : {bd.contact?.passport}
+                        <span className="block text-xs text-white/50 mt-1">{bd.contact?.nationality} • Né(e) le {bd.contact?.dob}</span>
                       </span>
                     </div>
+
                     <div className="flex justify-between pt-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">
-                        Estimation
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-[#d9b84f]">Estimation</span>
+                      <span className="text-lg font-bold text-[#d9b84f]">
+                        {getEstimatedPrice(bd.dep, bd.arr, bd.jet, bd.tripType || "simple", selectedFlightData.origin, selectedFlightData.dest)}
                       </span>
-                      <span className="text-lg font-bold text-[#d9b84f]">{bd.jet?.price}</span>
                     </div>
                   </div>
                 </div>
@@ -2245,35 +2646,48 @@ export default function Home() {
           </AnimatePresence>
         </div>
 
-        <div className="mb-2 flex shrink-0 gap-4 border-t border-[#d9b84f]/20 bg-[#050608] p-4 md:p-6">
-          {drawerStep > 1 && (
-            <button
-              onClick={() => setDrawerStep((s) => s - 1)}
-              className="cursor-pointer flex-1 rounded-2xl border border-white/10 py-4.5 text-xs font-bold uppercase tracking-widest transition-all hover:bg-white/5"
-            >
-              Retour
-            </button>
+        <div className="relative mb-2 flex flex-col shrink-0 gap-3 border-t border-[#d9b84f]/20 bg-[#050608] p-4 md:p-6">
+          
+          {isNextDisabled && (
+            <div className="text-center">
+              <span className="inline-flex items-center gap-2 rounded-full bg-[#d9b84f]/10 border border-[#d9b84f]/20 px-4 py-2 text-[11px] font-medium text-[#d9b84f]">
+                ⚠️
+                {drawerStep === 1 && "Aéroports distincts et date requis."}
+                {drawerStep === 2 && "Sélectionnez un appareil."}
+                {drawerStep === 4 && "Informations passager manquantes ou invalides."}
+              </span>
+            </div>
           )}
-          <button
-            disabled={isNextDisabled}
-            onClick={handleNextStep}
-            className={cx(
-              "cursor-pointer flex-[2] rounded-[20px] py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all",
-              isNextDisabled ? "cursor-not-allowed bg-white/10 text-white/30" : styles.goldGrad,
+
+          <div className="flex w-full gap-4">
+            {drawerStep > 1 && (
+              <button
+                onClick={() => setDrawerStep((s) => s - 1)}
+                className="cursor-pointer flex-1 rounded-2xl border border-white/10 py-4.5 text-xs font-bold uppercase tracking-widest transition-all hover:bg-white/5"
+              >
+                Retour
+              </button>
             )}
-          >
-            {detailedVehicle
-              ? "Choisir cet appareil"
-              : drawerStep === 5
-                ? "Envoyer la demande"
-                : "Étape suivante"}
-          </button>
+            <button
+              disabled={isNextDisabled}
+              onClick={handleNextStep}
+              className={cx(
+                "cursor-pointer flex-[2] rounded-[20px] py-4.5 text-[13px] font-bold uppercase tracking-[0.2em] text-black transition-all",
+                isNextDisabled ? "cursor-not-allowed bg-white/10 text-white/30" : styles.goldGrad,
+              )}
+            >
+              {detailedVehicle
+                ? "Choisir cet appareil"
+                : drawerStep === 5
+                  ? "Envoyer la demande"
+                  : "Étape suivante"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 
-  // Fonction Helper de rendu Responsive (Modal PC / Drawer Mobile)
   const renderModal = (
     open: boolean,
     onOpenChange: (o: boolean) => void,
@@ -2411,7 +2825,10 @@ export default function Home() {
                 </button>
 
                 <button
-                  onClick={() => setIsLoggedIn(!isLoggedIn)}
+                  onClick={() => {
+                    if (!isLoggedIn) setIsLoggedIn(true);
+                    setVipDashboardOpen(true);
+                  }}
                   className={cx(
                     "flex items-center gap-2 rounded-full border px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition cursor-pointer",
                     isLoggedIn 
@@ -2419,8 +2836,8 @@ export default function Home() {
                       : "border-white/20 bg-white/5 text-white/70 hover:border-white/40 hover:text-white"
                   )}
                 >
-                  {isLoggedIn ? <User size={14} className="text-[#d9b84f]" /> : <LogOut size={14} className="rotate-180" />}
-                  {isLoggedIn ? "Mon Espace" : "Connexion VIP"}
+                  {isLoggedIn ? <User size={14} className="text-[#d9b84f]" /> : <User size={14} className="opacity-50" />}
+                  {isLoggedIn ? "Mon Espace VIP" : "Connexion VIP"}
                 </button>
               </div>
 
@@ -2900,10 +3317,10 @@ export default function Home() {
         </a>
       </div>
 
-      {/* MODALS RENDERING (DESKTOP AND MOBILE) */}
       {renderModal(emptyLegDrawerOpen, setEmptyLegDrawerOpen, "Vol à vide", "Réservation", emptyLegContent)}
       {renderModal(jetCardOpen, setJetCardOpen, "Jet Card", "Abonnement", jetCardContent)}
       {renderModal(uberDrawerOpen, handleUberDrawerChange, "Sélection", "Choix du jet", bookingContent)}
+      {renderModal(vipDashboardOpen, setVipDashboardOpen, "Espace VIP", "Tableau de bord", vipDashboardContent)}
 
       <AnimatePresence>
         {panelOpen && (
@@ -3020,7 +3437,11 @@ export default function Home() {
                     </div>
                     <div className="mt-4 flex flex-col gap-3">
                       <button
-                        onClick={() => setIsLoggedIn(!isLoggedIn)}
+                        onClick={() => {
+                          if (!isLoggedIn) setIsLoggedIn(true);
+                          setPanelOpen(false);
+                          setVipDashboardOpen(true);
+                        }}
                         className={cx(
                           "cursor-pointer flex items-center gap-4 rounded-[20px] border p-4 transition",
                           isLoggedIn 
@@ -3029,11 +3450,11 @@ export default function Home() {
                         )}
                       >
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d9b84f]/10 text-[#d9b84f]">
-                          {isLoggedIn ? <User size={18} /> : <LogOut size={18} className="rotate-180" />}
+                          {isLoggedIn ? <User size={18} /> : <User size={18} className="opacity-50" />}
                         </div>
                         <div className="text-left">
                           <p className={cx("text-sm font-bold", isLoggedIn ? "text-[#d9b84f]" : "text-white")}>
-                            {isLoggedIn ? "Mon Espace" : "Connexion VIP"}
+                            {isLoggedIn ? "Mon Espace VIP" : "Connexion VIP"}
                           </p>
                           <p className="text-xs text-white/40">Gérer mon compte & mes factures</p>
                         </div>
@@ -3088,7 +3509,7 @@ export default function Home() {
                             pax: 1,
                             date: "",
                             tripType: "simple",
-                            contact: { firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "" },
+                            contact: { civility: "M.", firstName: "", lastName: "", phone: "", email: "", nationality: "", dob: "", passport: "", company: "" },
                             isLocked: true,
                             isCustomRoute: false,
                           }, flights[0].id);
@@ -3106,7 +3527,7 @@ export default function Home() {
                         <div className="relative z-10 p-5">
                           <h4 className="text-lg font-bold text-white">{v.name}</h4>
                           <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-[#d9b84f]">
-                            {v.price}
+                            {getEstimatedPrice(null, null, v, "simple", flights[0].origin, flights[0].dest)}
                           </p>
                           <div className="mt-2 flex gap-3 text-[11px] font-medium text-white/70">
                             <span>{v.seats} pax</span>
