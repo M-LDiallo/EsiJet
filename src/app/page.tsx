@@ -56,13 +56,11 @@ import "react-phone-number-input/style.css";
 
 import { allAirports, searchAirports, type Airport } from "@/lib/airports";
 
-// --- TRADUCTIONS ---
 const translations = {
   fr: { explorer: "Explorer", vols: "Vols", about: "À propos" },
   en: { explorer: "Explore", vols: "Flights", about: "About us" }
 };
 
-// --- VALIDATEURS ---
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 const isValidEmail = (email?: string) => {
   if (!email) return false;
@@ -78,11 +76,9 @@ const isValidInternationalPhone = (phone?: string) => {
 };
 const isValidPassport = (passport?: string) => {
   if (!passport) return false;
-  // Syntaxe générique des passeports (6 à 15 caractères alphanumériques)
   return /^[A-Z0-9]{6,15}$/i.test(passport.trim());
 };
 
-// --- MAPBOX ---
 const MapBox = dynamic(() => import("@/components/MapBox"), { ssr: false });
 
 class MapErrorBoundary extends Component<{children: React.ReactNode}, {hasError: boolean}> {
@@ -108,7 +104,6 @@ class MapErrorBoundary extends Component<{children: React.ReactNode}, {hasError:
   }
 }
 
-// --- UTILITAIRES ---
 const getMapOriginFromAirport = (airport: any): [number, number] | null => {
   if (!airport) return null;
   if (typeof airport.lat === "number" && typeof airport.lon === "number") return [airport.lat, airport.lon];
@@ -138,7 +133,6 @@ const vibrate = (pattern: number | number[]) => {
 
 const generateBookingId = () => `VIP-${Math.floor(1000 + Math.random() * 9000)}`;
 
-// --- TYPES ---
 type Vehicle = {
   id: string;
   name: string;
@@ -224,7 +218,6 @@ type CustomSelectProps =
   | { type: "airport"; val: Airport | null; setVal: (airport: Airport) => void; Icon: any; ph: string; pax?: never; setPax?: never; maxPax?: never; disabled?: boolean; }
   | { type: "pax"; val?: never; setVal?: never; Icon: any; ph: string; pax: number; setPax: (pax: number) => void; maxPax?: number; disabled?: boolean; };
 
-// --- FONCTIONS ET DONNÉES GLOBALES ---
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
 
 const getEstimatedPrice = (dep: any, arr: any, jet: Vehicle | null | undefined, tripType: string, fallbackOrigin?: [number, number], fallbackDest?: [number, number]) => {
@@ -271,7 +264,7 @@ const getPredefinedAirport = (city: string): Airport | null => {
   return searchAirports(city)[0] ?? null;
 };
 
-// --- CONSTANTES ---
+
 const GoogleIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24">
     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -667,7 +660,6 @@ const fadeUp = {
   transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
 };
 
-// --- COMPOSANTS ---
 
 function CustomSelect(props: CustomSelectProps) {
   const [open, setOpen] = useState(false);
@@ -1039,7 +1031,6 @@ function FlightSearchForm({
   );
 }
 
-// --- COMPOSANT PRINCIPAL (PAGE) ---
 
 export default function Home() {
   const [isDesktop, setIsDesktop] = useState(true);
@@ -1702,7 +1693,6 @@ export default function Home() {
                 </motion.div>
               )}
 
-              {/* --- REGISTER MODE : STEP 4 (Securité et Contact) --- */}
               {jcAuthMode === "register" && jcStep === 4 && (
                 <motion.div key="jc-s4" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} className="space-y-6">
                   <div className="mb-6">
@@ -1928,7 +1918,6 @@ export default function Home() {
   const bookingContent = (
     <div className="relative z-50 mx-auto flex h-[82svh] w-full max-w-[1300px] flex-col overflow-hidden rounded-[32px] border border-[#d9b84f]/30 bg-[#050608] shadow-[0_0_50px_rgba(217,184,79,0.15)] md:h-[75vh] md:flex-row">
       
-      {/* SECTION CARTE : Elargie à 55% sur PC avec masque CSS vertical pour cacher le haut/bas vide */}
       <div className="relative h-[25%] flex items-center justify-center w-full shrink-0 border-b border-[#d9b84f]/20 md:order-2 md:h-full md:w-[55%] md:border-b-0 md:border-l bg-[#050608]">
         <div className="absolute inset-0 grayscale opacity-40 mix-blend-screen pointer-events-none [mask-image:linear-gradient(to_bottom,transparent_5%,black_20%,black_80%,transparent_95%)] bg-black">
           {uberDrawerOpen && mOrigin && mDest && (
@@ -1944,7 +1933,6 @@ export default function Home() {
 
       <div className="flex min-h-0 flex-1 flex-col bg-[#050608] text-white md:order-1 md:w-[45%]">
         
-        {/* NOUVEAU : Barre de progression */}
         <div className="px-5 pt-6 pb-2 md:px-6 md:pt-8 w-full shrink-0">
           <div className="flex w-full gap-1.5 justify-between">
             {Array.from({ length: selectedEmptyLeg ? 2 : 5 }).map((_, i) => (
